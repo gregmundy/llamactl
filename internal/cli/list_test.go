@@ -50,3 +50,51 @@ func TestListEmpty(t *testing.T) {
 		t.Errorf("output:\n%s", out)
 	}
 }
+
+func TestListShowsLegacyMetadataWithoutParamsB(t *testing.T) {
+	dir := t.TempDir()
+	existing := filepath.Join(dir, "old.gguf")
+	if err := os.WriteFile(existing, []byte("xxx"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	store := newFakeModelStore()
+	// Pre-2.5 entry: no ParamsB or Arch.
+	_ = store.Put(context.Background(), models.Metadata{
+		ID: "legacy-model", Quant: models.Q4_K_M, GGUFPath: existing, SizeBytes: 3,
+		AddedAt: time.Date(2026, 5, 10, 0, 0, 0, 0, time.UTC),
+	})
+	d := &Deps{ModelStore: store, FS: OSFileSystem{}}
+	out, _, err := runRoot(t, d, "list")
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	if !strings.Contains(out, "legacy-model") {
+		t.Errorf("output missing legacy entry:\n%s", out)
+	}
+	// PARAMS column should be blank for legacy entries — must not show stray "0B".
+	if strings.Contains(out, "0B") {
+		t.Errorf("PARAMS column should be blank, not '0B':\n%s", out)
+	}
+}
+
+func TestListShowsParamsBForPhase25Entries(t *testing.T) {
+	dir := t.TempDir()
+	existing := filepath.Join(dir, "new.gguf")
+	if err := os.WriteFile(existing, []byte("xxx"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	store := newFakeModelStore()
+	_ = store.Put(context.Background(), models.Metadata{
+		ID: "qwen3-8b-instruct", Quant: models.Q4_K_M, GGUFPath: existing, SizeBytes: 3,
+		AddedAt: time.Date(2026, 5, 11, 0, 0, 0, 0, time.UTC),
+		ParamsB: 8, Arch: models.Arch("qwen3"),
+	})
+	d := &Deps{ModelStore: store, FS: OSFileSystem{}}
+	out, _, err := runRoot(t, d, "list")
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	if !strings.Contains(out, "8B") {
+		t.Errorf("output should show 8B; got:\n%s", out)
+	}
+}
