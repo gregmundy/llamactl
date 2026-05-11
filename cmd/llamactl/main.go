@@ -12,7 +12,10 @@ import (
 
 	"github.com/gregmundy/llamactl/internal/cli"
 	"github.com/gregmundy/llamactl/internal/config"
+	"github.com/gregmundy/llamactl/internal/download"
 	"github.com/gregmundy/llamactl/internal/hardware"
+	"github.com/gregmundy/llamactl/internal/hf"
+	"github.com/gregmundy/llamactl/internal/models"
 	"github.com/gregmundy/llamactl/internal/runner"
 	"github.com/gregmundy/llamactl/internal/server"
 )
@@ -47,6 +50,22 @@ func main() {
 		Now:              time.Now,
 	}
 
+	// Phase 2: wire HFClient, Downloader, QuantSelector, ModelStore
+	hfCache := hf.NewCache(paths.CacheDir())
+	hfClient := hf.NewClient("https://huggingface.co", hfCache, nil)
+	if tok := firstNonEmptyEnv("LLAMACTL_HF_TOKEN", "HF_TOKEN"); tok != "" {
+		hfClient = hfClient.WithToken(tok)
+	}
+
+	deps.HFClient = hfClient
+	deps.Downloader = &download.Downloader{Ranger: hfClient}
+	deps.QuantSelector = cli.SelectorAdapter{}
+	deps.ModelStore = models.NewFileStore(paths.ModelsMetaDir())
+	deps.FS = cli.OSFileSystem{}
+	deps.ModelsConfigDir = paths.ModelsMetaDir()
+	deps.SharedModelsDir = paths.DataDir()
+	deps.HFCacheDir = paths.CacheDir()
+
 	root := cli.NewRoot(deps, llamactlVersion)
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
@@ -58,4 +77,13 @@ func main() {
 		fmt.Fprintln(os.Stderr, "llamactl:", err)
 		os.Exit(1)
 	}
+}
+
+func firstNonEmptyEnv(keys ...string) string {
+	for _, k := range keys {
+		if v := os.Getenv(k); v != "" {
+			return v
+		}
+	}
+	return ""
 }

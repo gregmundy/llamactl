@@ -4,9 +4,13 @@ import (
 	"context"
 	"errors"
 	"io"
+	"os"
 	"time"
 
+	"github.com/gregmundy/llamactl/internal/download"
 	"github.com/gregmundy/llamactl/internal/hardware"
+	"github.com/gregmundy/llamactl/internal/hf"
+	"github.com/gregmundy/llamactl/internal/models"
 	"github.com/gregmundy/llamactl/internal/server"
 )
 
@@ -24,6 +28,39 @@ type ServerResolver interface {
 // ServerProber runs `llama-server --version` and caches the result.
 type ServerProber interface {
 	Probe(ctx context.Context, path string) (server.Version, error)
+}
+
+// HFClient is the HuggingFace API + bytes seam.
+type HFClient interface {
+	Search(ctx context.Context, query string) ([]hf.SearchHit, error)
+	SearchRefresh(ctx context.Context, query string) ([]hf.SearchHit, error)
+	RepoInfo(ctx context.Context, repoID string) (hf.Repo, error)
+	FetchRange(ctx context.Context, repoID, file string, offset, end int64, w io.Writer) error
+}
+
+// Downloader resolves a single Request → on-disk GGUF.
+type Downloader interface {
+	Get(ctx context.Context, req download.Request) error
+}
+
+// QuantSelector picks the best-fitting quant for a model on a host.
+type QuantSelector interface {
+	Select(model models.Model, hw hardware.Info, targetCtx int) (models.Quant, error)
+}
+
+// ModelStore is per-tool metadata storage.
+type ModelStore interface {
+	List(ctx context.Context) ([]models.Metadata, error)
+	Get(ctx context.Context, id string) (models.Metadata, error)
+	Put(ctx context.Context, m models.Metadata) error
+	Delete(ctx context.Context, id string) error
+}
+
+// FileSystem is a narrow seam for the disk operations cli/add/list/remove need.
+type FileSystem interface {
+	Stat(path string) (os.FileInfo, error)
+	Remove(path string) error
+	MkdirAll(path string, perm os.FileMode) error
 }
 
 // MinLlamaServerBuild is the lowest llama.cpp build number llamactl will
@@ -45,7 +82,32 @@ type Deps struct {
 	ServerResolver ServerResolver
 	ServerProber   ServerProber
 
+	HFClient      HFClient
+	Downloader    Downloader
+	QuantSelector QuantSelector
+	ModelStore    ModelStore
+	FS            FileSystem
+
+	ModelsConfigDir string
+	SharedModelsDir string
+	HFCacheDir      string
+
 	LookPath func(name string) (string, error)
 	Getenv   func(key string) string
 	Now      func() time.Time
+}
+
+// OSFileSystem is the production FileSystem backed by package os.
+type OSFileSystem struct{}
+
+func (OSFileSystem) Stat(p string) (os.FileInfo, error)     { return os.Stat(p) }
+func (OSFileSystem) Remove(p string) error                  { return os.Remove(p) }
+func (OSFileSystem) MkdirAll(p string, m os.FileMode) error { return os.MkdirAll(p, m) }
+
+// SelectorAdapter wraps the package-level models.SelectQuant in the
+// QuantSelector interface.
+type SelectorAdapter struct{}
+
+func (SelectorAdapter) Select(m models.Model, hi hardware.Info, ctx int) (models.Quant, error) {
+	return models.SelectQuant(m, hi, ctx)
 }
