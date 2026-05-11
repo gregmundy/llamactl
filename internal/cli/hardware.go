@@ -12,9 +12,10 @@ import (
 
 func newHardwareCmd(deps *Deps) *cobra.Command {
 	return &cobra.Command{
-		Use:   "hardware",
-		Short: "Detect chip, RAM, GPU memory, OS version; cache to hardware.json",
-		Args:  cobra.NoArgs,
+		Use:           "hardware",
+		Short:         "Detect chip, RAM, GPU memory, OS version; cache to hardware.json",
+		SilenceErrors: true, // main.go is the single error printer
+		Args:          cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			return runHardware(cmd.Context(), deps)
 		},
