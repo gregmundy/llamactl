@@ -6,7 +6,7 @@ import (
 	"strings"
 )
 
-// Model is a whitelisted model entry. The Whitelist map's key matches Model.ID.
+// Model is a preferred-ID model entry. The PreferredIDs map's key matches Model.ID.
 type Model struct {
 	ID      string // canonical llamactl id, e.g. "qwen2.5-7b-instruct"
 	HFRepo  string // HuggingFace repo, e.g. "Qwen/Qwen2.5-7B-Instruct-GGUF"
@@ -15,8 +15,9 @@ type Model struct {
 	MaxCtx  int // maximum context tokens supported by the model family
 }
 
-// PreferredIDs is the curated set of models llamactl supports in v1.
-// Expanding it is a code change, per PRD §4.
+// PreferredIDs is the curated table of short-ids with pre-tuned ParamsB/Arch/MaxCtx.
+// Adding entries is a code change; `add` is not gated by this table — any HF GGUF repo
+// path is accepted with explicit --quant (see PRD §4).
 var PreferredIDs = map[string]Model{
 	"qwen2.5-3b-instruct":  {ID: "qwen2.5-3b-instruct", HFRepo: "Qwen/Qwen2.5-3B-Instruct-GGUF", Arch: ArchQwen25, ParamsB: 3, MaxCtx: 32768},
 	"qwen2.5-7b-instruct":  {ID: "qwen2.5-7b-instruct", HFRepo: "Qwen/Qwen2.5-7B-Instruct-GGUF", Arch: ArchQwen25, ParamsB: 7, MaxCtx: 32768},
@@ -30,8 +31,8 @@ var PreferredIDs = map[string]Model{
 	"mistral-7b-v0.3":      {ID: "mistral-7b-v0.3", HFRepo: "bartowski/Mistral-7B-Instruct-v0.3-GGUF", Arch: ArchMistral, ParamsB: 7, MaxCtx: 32768},
 }
 
-// LookupOrSuggest returns the whitelist entry for id, or an error listing
-// available ids if it isn't whitelisted. Error message is suitable for
+// LookupOrSuggest returns the PreferredIDs entry for id, or an error listing
+// available ids if it isn't found. Error message is suitable for
 // printing to the user verbatim (no further formatting needed by callers).
 func LookupOrSuggest(id string) (Model, error) {
 	if m, ok := PreferredIDs[id]; ok {

@@ -60,7 +60,7 @@ func TestArchFromGGUF(t *testing.T) {
 		want Arch
 	}{
 		{"llama", ArchLlama3},
-		{"qwen2", ArchQwen25},
+		{"qwen2", Arch("qwen2")}, // intentionally NOT ArchQwen25 — Qwen2 and Qwen2.5 differ
 		{"mistral", ArchMistral},
 		{"qwen3", Arch("qwen3")},   // pass-through for unknown
 		{"gemma", Arch("gemma")},   // pass-through for unknown

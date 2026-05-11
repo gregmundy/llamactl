@@ -96,6 +96,10 @@ func parseHeader(r io.Reader) (Header, error) {
 		key   string
 		value any
 	}
+	const maxKVCount = 10_000
+	if kvCount > maxKVCount {
+		return Header{}, fmt.Errorf("implausible kv_count %d (exceeds %d)", kvCount, maxKVCount)
+	}
 	entries := make([]kvEntry, 0, kvCount)
 	for i := uint64(0); i < kvCount; i++ {
 		key, err := readString(br)

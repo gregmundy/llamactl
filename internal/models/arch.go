@@ -8,8 +8,6 @@ func ArchFromGGUF(s string) Arch {
 	switch s {
 	case "llama":
 		return ArchLlama3
-	case "qwen2":
-		return ArchQwen25
 	case "mistral":
 		return ArchMistral
 	default:

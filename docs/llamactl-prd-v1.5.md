@@ -54,7 +54,6 @@ This tool compresses it to one command per phase.
 - Multi-model orchestration (one model per `serve` command is fine)
 - Authentication on the endpoint (relies on Tailscale for access control)
 - Local quantization conversion (download pre-quantized only)
-- Models outside the curated whitelist
 - Telemetry, usage analytics, update notifications
 - Speculative decoding auto-config
 - Hot model swapping
@@ -222,7 +221,7 @@ llamactl config <key> [<value>]
 ### Quantization selection algorithm
 
 Inputs:
-- `model_size_b` (parameter count in billions, from whitelist)
+- `model_size_b` (parameter count in billions, from preferred-IDs table or GGUF header)
 - `model_arch` (qwen2.5 | llama3 | mistral)
 - `target_ctx` (tokens; from --ctx or default 8192)
 - `available_memory_gb` (gpu_addressable_memory − os_overhead − headroom)
@@ -400,13 +399,10 @@ following hold:
 
 - Linux + NVIDIA support (separate code paths, share quant-selection logic)
 - Multi-platform binary distribution
-- Custom HuggingFace source for `add` (accept any GGUF repo, not just
-  the curated whitelist)
 - Local quantization pipeline (pull original weights, convert, quantize
   via dedicated subcommand; brings Python toolchain dependency)
 - Speculative decoding auto-config
 - Web UI for management
-- Model registry beyond whitelist
 - Authentication on endpoint
 - Performance benchmarking and reporting
 - Coordinated metadata format with future tools

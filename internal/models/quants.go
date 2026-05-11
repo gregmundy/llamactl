@@ -1,4 +1,4 @@
-// Package models holds the curated whitelist, quantization tables, and the
+// Package models holds the preferred-ID table, quantization tables, and the
 // pure quant-selection algorithm. No I/O. No clocks. No env reads. The
 // FileStore in this package is the one exception — it operates on Metadata
 // and is the natural home for it.
@@ -52,7 +52,7 @@ const (
 
 // QuantSizeTable[paramsB][quant] is approximate on-disk GGUF size in
 // gigabytes. Numbers are starting estimates from llama.cpp's GGUF
-// model-size docs + measured filesizes for the v1 whitelist. The
+// model-size docs + measured filesizes for the v1 preferred-IDs. The
 // implementer should re-validate against HF file sizes during Task 11.
 var QuantSizeTable = map[int]map[Quant]float64{
 	3:  {Q5_K_M: 2.2, Q4_K_M: 1.9, Q4_K_S: 1.8, IQ4_XS: 1.7, IQ3_M: 1.5, IQ3_XS: 1.4, Q2_K: 1.3},

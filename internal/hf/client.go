@@ -47,8 +47,8 @@ func NewClient(baseURL string, cache *Cache, httpClient *http.Client) *Client {
 // WithToken sets the bearer token used on every request.
 func (c *Client) WithToken(t string) *Client { c.token = t; return c }
 
-// Search returns whitelisted-candidate hits (caller filters against the
-// internal models whitelist). Cached with SearchTTL.
+// Search returns all HF GGUF repo hits matching the query (caller
+// annotates which ones are in models.PreferredIDs). Cached with SearchTTL.
 func (c *Client) Search(ctx context.Context, query string) ([]SearchHit, error) {
 	return c.search(ctx, query, false)
 }

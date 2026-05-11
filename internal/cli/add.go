@@ -28,8 +28,8 @@ func newAddCmd(d *Deps) *cobra.Command {
 	var quantOverride string
 	var targetCtx int
 	cmd := &cobra.Command{
-		Use:   "add <model-id>",
-		Short: "Download a whitelisted model and write metadata",
+		Use:   "add <input>",
+		Short: "Download a preferred short-id or any HuggingFace GGUF repo",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runAdd(cmd.Context(), d, args[0], quantOverride, targetCtx)

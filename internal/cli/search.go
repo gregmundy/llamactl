@@ -16,7 +16,7 @@ func newSearchCmd(d *Deps) *cobra.Command {
 	var refresh bool
 	cmd := &cobra.Command{
 		Use:   "search <query>",
-		Short: "Search whitelisted models on HuggingFace",
+		Short: "Search HuggingFace for GGUF repos (preferred IDs marked with *)",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runSearch(cmd.Context(), d, args[0], refresh)
