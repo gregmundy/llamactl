@@ -19,5 +19,6 @@ func NewRoot(deps *Deps, llamactlVersion string) *cobra.Command {
 		root.SetErr(deps.Stderr)
 	}
 	root.AddCommand(newHardwareCmd(deps))
+	root.AddCommand(newDoctorCmd(deps))
 	return root
 }
