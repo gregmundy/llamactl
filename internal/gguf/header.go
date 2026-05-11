@@ -45,11 +45,11 @@ const (
 	typeF64    uint32 = 12
 )
 
-// readLimit caps the number of bytes ReadHeader will pull from disk. The
-// header section is at the start of the file and is typically <100 KiB;
-// 1 MiB is comfortable headroom and prevents pathological reads on
-// corrupted files.
-const readLimit = 1 << 20
+// readLimit caps the number of bytes ReadHeader will pull from disk. Real
+// GGUFs embed the full tokenizer vocabulary in the header; Qwen-class
+// tokenizers (150k+ tokens) easily span 5-10 MiB. 64 MiB covers any
+// reasonable tokenizer and still protects against pathological inputs.
+const readLimit = 64 << 20
 
 // ReadHeader opens path and parses the GGUF metadata header. Returns
 // typed errors for bad magic, unsupported version, and unsupported
@@ -210,6 +210,24 @@ func readValue(r io.Reader, kind uint32) (any, error) {
 		var v float64
 		err := binary.Read(r, binary.LittleEndian, &v)
 		return v, err
+	case typeArray:
+		// Arrays appear in every real-world GGUF (tokenizer vocabularies,
+		// merges, etc.). We don't need their contents — we just need to
+		// advance the cursor past them so subsequent KVs parse correctly.
+		var elemType uint32
+		if err := binary.Read(r, binary.LittleEndian, &elemType); err != nil {
+			return nil, fmt.Errorf("array elem type: %w", err)
+		}
+		var arrayLen uint64
+		if err := binary.Read(r, binary.LittleEndian, &arrayLen); err != nil {
+			return nil, fmt.Errorf("array length: %w", err)
+		}
+		for i := uint64(0); i < arrayLen; i++ {
+			if _, err := readValue(r, elemType); err != nil {
+				return nil, fmt.Errorf("array[%d]: %w", i, err)
+			}
+		}
+		return nil, nil
 	default:
 		return nil, fmt.Errorf("%w: %d", ErrUnsupportedGGUFType, kind)
 	}

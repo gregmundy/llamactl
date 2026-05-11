@@ -83,13 +83,17 @@ func (c *Client) search(ctx context.Context, query string, refresh bool) ([]Sear
 
 // RepoInfo fetches /api/models/<repoID>. Cached with RepoTTL.
 func (c *Client) RepoInfo(ctx context.Context, repoID string) (Repo, error) {
-	if data, fresh, err := c.cache.Get("hf-repo", repoID, RepoTTL); err == nil && fresh && data != nil {
+	if data, fresh, err := c.cache.Get("hf-repo-v2", repoID, RepoTTL); err == nil && fresh && data != nil {
 		var r Repo
 		if jerr := json.Unmarshal(data, &r); jerr == nil {
 			return r, nil
 		}
 	}
-	endpoint := c.baseURL + "/api/models/" + repoID
+	// blobs=true is required for HF to include the `lfs` block on each
+	// sibling. Without it, lfs.sha256 is absent for most community repos
+	// (only certain official repos happen to expose it by default), and
+	// our dedupe + verify path can't function.
+	endpoint := c.baseURL + "/api/models/" + repoID + "?blobs=true"
 	data, err := c.doJSON(ctx, endpoint)
 	if err != nil {
 		return Repo{}, err
@@ -98,7 +102,7 @@ func (c *Client) RepoInfo(ctx context.Context, repoID string) (Repo, error) {
 	if err := json.Unmarshal(data, &r); err != nil {
 		return Repo{}, fmt.Errorf("decode repo response: %w", err)
 	}
-	_ = c.cache.Put("hf-repo", repoID, data)
+	_ = c.cache.Put("hf-repo-v2", repoID, data)
 	return r, nil
 }
 

@@ -48,7 +48,7 @@ func buildGGUF(t *testing.T, version uint32, arch string, paramsCount, contextLe
 	}
 	if badType {
 		writeKey(t, &buf, "extra.bad")
-		must(t, binary.Write(&buf, binary.LittleEndian, uint32(9))) // array type
+		must(t, binary.Write(&buf, binary.LittleEndian, uint32(99))) // truly unsupported type
 	}
 	return buf.Bytes()
 }
@@ -134,8 +134,43 @@ func TestReadHeaderUnsupportedValueType(t *testing.T) {
 	if !errors.Is(err, ErrUnsupportedGGUFType) {
 		t.Fatalf("err = %v, want ErrUnsupportedGGUFType", err)
 	}
-	if !strings.Contains(err.Error(), "9") {
-		t.Errorf("error should mention type code 9; got: %v", err)
+	if !strings.Contains(err.Error(), "99") {
+		t.Errorf("error should mention type code 99; got: %v", err)
+	}
+}
+
+func TestReadHeaderSkipsArrayValues(t *testing.T) {
+	// Every real GGUF has tokenizer arrays. Confirm the parser walks past
+	// them and still picks up subsequent keys.
+	var buf bytes.Buffer
+	buf.WriteString("GGUF")
+	must(t, binary.Write(&buf, binary.LittleEndian, uint32(3)))
+	must(t, binary.Write(&buf, binary.LittleEndian, uint64(0))) // tensor_count
+	must(t, binary.Write(&buf, binary.LittleEndian, uint64(3))) // kv_count: arch, array, params
+
+	// 1. general.architecture = "llama"
+	writeKVString(t, &buf, "general.architecture", "llama")
+	// 2. tokenizer.ggml.tokens = ["a", "b", "c"]  (an array of strings)
+	writeKey(t, &buf, "tokenizer.ggml.tokens")
+	must(t, binary.Write(&buf, binary.LittleEndian, uint32(9)))   // array type
+	must(t, binary.Write(&buf, binary.LittleEndian, uint32(8)))   // elem type = string
+	must(t, binary.Write(&buf, binary.LittleEndian, uint64(3)))   // arrayLen
+	for _, s := range []string{"a", "b", "c"} {
+		must(t, binary.Write(&buf, binary.LittleEndian, uint64(len(s))))
+		buf.WriteString(s)
+	}
+	// 3. general.parameter_count = 7615616512  (must be reachable after the array)
+	writeKVU64(t, &buf, "general.parameter_count", 7615616512)
+
+	h, err := parseHeader(bytes.NewReader(buf.Bytes()))
+	if err != nil {
+		t.Fatalf("parseHeader: %v", err)
+	}
+	if h.Architecture != "llama" {
+		t.Errorf("Architecture = %q, want llama", h.Architecture)
+	}
+	if h.ParamsCount != 7615616512 {
+		t.Errorf("ParamsCount = %d, want 7615616512 (array should have been skipped)", h.ParamsCount)
 	}
 }
 
