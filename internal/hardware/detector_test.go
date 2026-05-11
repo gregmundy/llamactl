@@ -177,3 +177,59 @@ func TestDetect_ParsesIogpuWiredLimit(t *testing.T) {
 		})
 	}
 }
+
+func TestDetect_HypervisorAndMetal(t *testing.T) {
+	cases := []struct {
+		name      string
+		hvmm      string
+		displays  string
+		wantHV    bool
+		wantMetal bool
+	}{
+		{
+			name:      "bare metal Apple Silicon",
+			hvmm:      "kern.hv_vmm_present: 0\n",
+			displays:  readFixture(t, "spdisplays_m2pro.json"),
+			wantHV:    false,
+			wantMetal: true,
+		},
+		{
+			name:      "VM with Metal passthrough",
+			hvmm:      "kern.hv_vmm_present: 1\n",
+			displays:  readFixture(t, "spdisplays_m2pro.json"),
+			wantHV:    true,
+			wantMetal: true,
+		},
+		{
+			name:      "VM without Metal",
+			hvmm:      "kern.hv_vmm_present: 1\n",
+			displays:  readFixture(t, "spdisplays_vm_nometal.json"),
+			wantHV:    true,
+			wantMetal: false,
+		},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			runner := &fakeRunner{
+				t: t,
+				outputs: map[string]string{
+					"sysctl kern.hv_vmm_present":         c.hvmm,
+					"system_profiler SPDisplaysDataType": c.displays,
+				},
+				errs: map[string]error{
+					"system_profiler SPHardwareDataType": errors.New("not needed"),
+					"sysctl hw.memsize":                  errors.New("not needed"),
+					"sysctl iogpu.wired_limit_mb":        errors.New("not needed"),
+					"sw_vers -productVersion":            errors.New("not needed"),
+				},
+			}
+			info, _ := (&Detector{Runner: runner}).Detect(context.Background())
+			if info.HypervisorPresent != c.wantHV {
+				t.Errorf("HypervisorPresent = %v, want %v", info.HypervisorPresent, c.wantHV)
+			}
+			if info.MetalDeviceDetected != c.wantMetal {
+				t.Errorf("MetalDeviceDetected = %v, want %v", info.MetalDeviceDetected, c.wantMetal)
+			}
+		})
+	}
+}

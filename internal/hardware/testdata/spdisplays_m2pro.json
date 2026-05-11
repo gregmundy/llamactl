@@ -1,0 +1,9 @@
+{
+  "SPDisplaysDataType": [
+    {
+      "_name": "spdisplays_display",
+      "spdisplays_mtlgpufamilysupport": "spdisplays_metal3",
+      "sppci_model": "Apple M2 Pro"
+    }
+  ]
+}

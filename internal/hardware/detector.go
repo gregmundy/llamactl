@@ -37,6 +37,8 @@ func (d *Detector) Detect(ctx context.Context) (Info, error) {
 	d.probeRAM(ctx, &info)
 	d.probeOSVersion(ctx, &info)
 	d.probeIogpu(ctx, &info)
+	d.probeHypervisor(ctx, &info)
+	d.probeMetalDevice(ctx, &info)
 	return info, nil
 }
 
@@ -103,6 +105,35 @@ func (d *Detector) probeIogpu(ctx context.Context, info *Info) {
 		return
 	}
 	info.IogpuWiredLimitMB = n
+}
+
+func (d *Detector) probeHypervisor(ctx context.Context, info *Info) {
+	var stdout bytes.Buffer
+	if err := d.Runner.Run(ctx, "sysctl", []string{"kern.hv_vmm_present"}, "", &stdout, io.Discard); err != nil {
+		return
+	}
+	parts := strings.SplitN(strings.TrimSpace(stdout.String()), ":", 2)
+	if len(parts) != 2 {
+		return
+	}
+	info.HypervisorPresent = strings.TrimSpace(parts[1]) == "1"
+}
+
+func (d *Detector) probeMetalDevice(ctx context.Context, info *Info) {
+	var stdout bytes.Buffer
+	if err := d.Runner.Run(ctx, "system_profiler", []string{"SPDisplaysDataType", "-json"}, "", &stdout, io.Discard); err != nil {
+		return
+	}
+	var doc struct {
+		SPDisplaysDataType []map[string]any `json:"SPDisplaysDataType"`
+	}
+	if err := json.Unmarshal(stdout.Bytes(), &doc); err != nil {
+		return
+	}
+	// Any non-empty SPDisplaysDataType entry on Apple Silicon represents a
+	// real Metal-capable GPU. VMs without GPU passthrough return an empty
+	// array. This is the same heuristic the PRD §6.3 algorithm prescribes.
+	info.MetalDeviceDetected = len(doc.SPDisplaysDataType) > 0
 }
 
 var chipGenRe = regexp.MustCompile(`\bM(\d+)\b`)
