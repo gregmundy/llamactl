@@ -26,9 +26,14 @@ type ServerProber interface {
 	Probe(ctx context.Context, path string) (server.Version, error)
 }
 
-// MinLlamaServerBuild is the lowest llama.cpp build number llamactl supports.
-// Below this, doctor warns and recipes fall back to a conservative flag set.
-const MinLlamaServerBuild = 3500
+// MinLlamaServerBuild is the lowest llama.cpp build number llamactl will
+// accept. Set to 1 (any parseable, positive build) because Homebrew uses
+// upstream release tags (~4500+) while llamavm-managed builds use cmake's
+// own per-build counter starting from 1 — there's no single integer floor
+// that distinguishes "too old" from "modern custom build". Until we have
+// a feature-detection mechanism that reads, say, --help for flag support,
+// the parse-ability of `--version` is the only reliable gate.
+const MinLlamaServerBuild = 1
 
 type Deps struct {
 	Stdout io.Writer

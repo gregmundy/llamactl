@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"io"
 	"sync"
 )
 
@@ -27,11 +26,14 @@ func (p *Prober) Probe(ctx context.Context, path string) (Version, error) {
 	}
 	p.mu.Unlock()
 
-	var stdout bytes.Buffer
-	if err := p.Runner.Run(ctx, path, []string{"--version"}, "", &stdout, io.Discard); err != nil {
+	// llama-server's --version line may go to stderr (after Metal init
+	// messages on the same stream). Capture both into one buffer so
+	// ParseVersion can find the line regardless of which stream it lands on.
+	var combined bytes.Buffer
+	if err := p.Runner.Run(ctx, path, []string{"--version"}, "", &combined, &combined); err != nil {
 		return Version{}, fmt.Errorf("run %s --version: %w", path, err)
 	}
-	v, err := ParseVersion(stdout.String())
+	v, err := ParseVersion(combined.String())
 	if err != nil {
 		return Version{}, err
 	}

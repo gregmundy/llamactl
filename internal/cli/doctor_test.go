@@ -121,7 +121,7 @@ func TestDoctor_NoLlamaServer(t *testing.T) {
 
 func TestDoctor_LowLlamaServerVersionWarns(t *testing.T) {
 	deps := healthyDoctorDeps(t)
-	deps.ServerProber = &fakeProber{ver: server.Version{Build: 100, SHA: "old", Raw: "version: 100 (old)"}}
+	deps.ServerProber = &fakeProber{ver: server.Version{Build: 0, SHA: "old", Raw: "version: 0 (old)"}}
 	out, _, err := runRoot(t, deps, "doctor")
 	if !errors.Is(err, ErrUserError) {
 		t.Fatalf("want ErrUserError on old version, got %v", err)
