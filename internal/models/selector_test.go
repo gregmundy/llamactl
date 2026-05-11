@@ -15,7 +15,7 @@ func hw(ramGB int, iogpuMB int) hardware.Info {
 }
 
 func TestSelectQuant_PRDExample16GBQwen7B(t *testing.T) {
-	m := Whitelist["qwen2.5-7b-instruct"]
+	m := PreferredIDs["qwen2.5-7b-instruct"]
 	got, err := SelectQuant(m, hw(16, 0), 8192)
 	if err != nil {
 		t.Fatalf("err: %v", err)
@@ -26,7 +26,7 @@ func TestSelectQuant_PRDExample16GBQwen7B(t *testing.T) {
 }
 
 func TestSelectQuant_NoneFit(t *testing.T) {
-	m := Whitelist["llama3.3-70b"]
+	m := PreferredIDs["llama3.3-70b"]
 	_, err := SelectQuant(m, hw(8, 0), 8192)
 	if !errors.Is(err, ErrNoQuantFits) {
 		t.Fatalf("got %v, want ErrNoQuantFits", err)
@@ -34,7 +34,7 @@ func TestSelectQuant_NoneFit(t *testing.T) {
 }
 
 func TestSelectQuant_HighRAMPicksHighestQuant(t *testing.T) {
-	m := Whitelist["qwen2.5-7b-instruct"]
+	m := PreferredIDs["qwen2.5-7b-instruct"]
 	got, err := SelectQuant(m, hw(64, 0), 8192)
 	if err != nil {
 		t.Fatalf("err: %v", err)
@@ -47,7 +47,7 @@ func TestSelectQuant_HighRAMPicksHighestQuant(t *testing.T) {
 func TestSelectQuant_IogpuOverrideUsed(t *testing.T) {
 	// 64 GB RAM but iogpu pinned to 8 GB → tight budget.
 	// usable = 8 - 4 - 2 = 2 GB → Q2_K (2.7 GB) > 2 → none fit → ErrNoQuantFits.
-	m := Whitelist["qwen2.5-7b-instruct"]
+	m := PreferredIDs["qwen2.5-7b-instruct"]
 	_, err := SelectQuant(m, hw(64, 8*1024), 8192)
 	if !errors.Is(err, ErrNoQuantFits) {
 		t.Errorf("got err=%v; expected ErrNoQuantFits", err)

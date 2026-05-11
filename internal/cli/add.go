@@ -10,11 +10,13 @@ import (
 	"io"
 	"io/fs"
 	"os"
+	"path"
 	"path/filepath"
 	"strings"
 	"time"
 
 	"github.com/gregmundy/llamactl/internal/download"
+	"github.com/gregmundy/llamactl/internal/gguf"
 	"github.com/gregmundy/llamactl/internal/hardware"
 	"github.com/gregmundy/llamactl/internal/hf"
 	"github.com/gregmundy/llamactl/internal/models"
@@ -26,8 +28,8 @@ func newAddCmd(d *Deps) *cobra.Command {
 	var quantOverride string
 	var targetCtx int
 	cmd := &cobra.Command{
-		Use:   "add <model-id>",
-		Short: "Download a whitelisted model and write metadata",
+		Use:   "add <input>",
+		Short: "Download a preferred short-id or any HuggingFace GGUF repo",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runAdd(cmd.Context(), d, args[0], quantOverride, targetCtx)
@@ -38,17 +40,23 @@ func newAddCmd(d *Deps) *cobra.Command {
 	return cmd
 }
 
-func runAdd(ctx context.Context, d *Deps, id, quantOverride string, targetCtx int) error {
+func runAdd(ctx context.Context, d *Deps, input, quantOverride string, targetCtx int) error {
+	if strings.Contains(input, "/") {
+		return runAddHFPath(ctx, d, input, quantOverride)
+	}
+	return runAddPreferred(ctx, d, input, quantOverride, targetCtx)
+}
+
+// runAddPreferred handles the existing short-id flow unchanged.
+func runAddPreferred(ctx context.Context, d *Deps, id, quantOverride string, targetCtx int) error {
 	model, err := models.LookupOrSuggest(id)
 	if err != nil {
 		return fmt.Errorf("%w: %v", ErrUserError, err)
 	}
-
 	hw, err := ensureHardware(ctx, d)
 	if err != nil {
 		return err
 	}
-
 	var quant models.Quant
 	if quantOverride != "" {
 		if !isKnownQuant(quantOverride) {
@@ -61,7 +69,6 @@ func runAdd(ctx context.Context, d *Deps, id, quantOverride string, targetCtx in
 			return fmt.Errorf("%w: %v", ErrUserError, err)
 		}
 	}
-
 	repo, err := d.HFClient.RepoInfo(ctx, model.HFRepo)
 	if err != nil {
 		return fmt.Errorf("fetch HF repo info: %w", err)
@@ -70,15 +77,58 @@ func runAdd(ctx context.Context, d *Deps, id, quantOverride string, targetCtx in
 	if err != nil {
 		return fmt.Errorf("%w: %v", ErrUserError, err)
 	}
+	return finishAdd(ctx, d, model.ID, model.HFRepo, quant, file, expectedSHA, totalSize, model.ParamsB, model.Arch)
+}
 
-	destDir := filepath.Join(d.SharedModelsDir, model.ID)
+// runAddHFPath handles `add Org/Repo-GGUF --quant Q`. Requires explicit --quant.
+func runAddHFPath(ctx context.Context, d *Deps, repoID, quantOverride string) error {
+	repo, err := d.HFClient.RepoInfo(ctx, repoID)
+	if err != nil {
+		return fmt.Errorf("fetch HF repo info: %w", err)
+	}
+	if quantOverride == "" {
+		available := strings.Join(availableQuantsFromSiblings(repo.Siblings), ", ")
+		if available == "" {
+			available = "(no .gguf siblings found)"
+		}
+		return fmt.Errorf("%w: add %s requires --quant; available in %s: %s",
+			ErrUserError, repoID, repoID, available)
+	}
+	if !isKnownQuant(quantOverride) {
+		return fmt.Errorf("%w: unknown --quant %q (known: %s)", ErrUserError, quantOverride, knownQuantsList())
+	}
+	quant := models.Quant(quantOverride)
+	file, expectedSHA, totalSize, err := findQuantFile(repo, quant)
+	if err != nil {
+		return fmt.Errorf("%w: %v", ErrUserError, err)
+	}
+	id := deriveIDFromRepo(repoID)
+	return finishAdd(ctx, d, id, repoID, quant, file, expectedSHA, totalSize, 0, models.Arch(""))
+}
+
+// deriveIDFromRepo turns "Qwen/Qwen3-8B-Instruct-GGUF" into "qwen3-8b-instruct".
+// Lowercases first, then strips a trailing "-gguf" suffix (case-insensitive
+// by virtue of the prior lowercase).
+func deriveIDFromRepo(repoID string) string {
+	base := path.Base(repoID)
+	lower := strings.ToLower(base)
+	return strings.TrimSuffix(lower, "-gguf")
+}
+
+// finishAdd is the convergence point for both add flows: dedupe by on-disk
+// SHA, download if needed, optionally parse GGUF header (for HF-path mode
+// where ParamsB/Arch are still zero), and persist metadata.
+func finishAdd(ctx context.Context, d *Deps, id, repoID string, quant models.Quant,
+	file, expectedSHA string, totalSize int64, paramsB int, arch models.Arch) error {
+
+	destDir := filepath.Join(d.SharedModelsDir, id)
 	destPath := filepath.Join(destDir, string(quant)+".gguf")
 
 	if existing, _ := sha256OfFileIfExists(destPath); existing == expectedSHA {
 		fmt.Fprintf(d.Stdout, "already present (matched SHA): %s\n", destPath)
 	} else {
 		req := download.Request{
-			RepoID:         model.HFRepo,
+			RepoID:         repoID,
 			File:           file,
 			DestPath:       destPath,
 			ExpectedSHA256: expectedSHA,
@@ -90,25 +140,40 @@ func runAdd(ctx context.Context, d *Deps, id, quantOverride string, targetCtx in
 		}
 	}
 
+	// HF-path mode: read GGUF header to capture ParamsB/Arch.
+	// Skipped for preferred-id mode (paramsB > 0 means caller already
+	// supplied the values from the PreferredIDs map).
+	if paramsB == 0 && arch == "" {
+		header, herr := gguf.ReadHeader(destPath)
+		if herr != nil {
+			fmt.Fprintf(d.Stderr,
+				"llamactl: warning: could not read GGUF header (%v); ParamsB/Arch omitted\n", herr)
+		} else {
+			paramsB = int(header.ParamsCount / 1_000_000_000)
+			arch = models.ArchFromGGUF(header.Architecture)
+		}
+	}
+
 	now := time.Now
 	if d.Now != nil {
 		now = d.Now
 	}
 	meta := models.Metadata{
-		ID:        model.ID,
-		Repo:      model.HFRepo,
+		ID:        id,
+		Repo:      repoID,
 		Quant:     quant,
 		SHA256:    expectedSHA,
 		GGUFPath:  destPath,
 		SizeBytes: totalSize,
 		AddedAt:   now(),
+		ParamsB:   paramsB,
+		Arch:      arch,
 	}
 	if err := d.ModelStore.Put(ctx, meta); err != nil {
 		return fmt.Errorf("write metadata: %w", err)
 	}
-
 	fmt.Fprintf(d.Stdout, "installed %s (%s, %s) -> %s\n",
-		model.ID, quant, humanFileSize(totalSize), destPath)
+		id, quant, humanFileSize(totalSize), destPath)
 	return nil
 }
 

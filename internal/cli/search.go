@@ -16,7 +16,7 @@ func newSearchCmd(d *Deps) *cobra.Command {
 	var refresh bool
 	cmd := &cobra.Command{
 		Use:   "search <query>",
-		Short: "Search whitelisted models on HuggingFace",
+		Short: "Search HuggingFace for GGUF repos (preferred IDs marked with *)",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runSearch(cmd.Context(), d, args[0], refresh)
@@ -25,6 +25,8 @@ func newSearchCmd(d *Deps) *cobra.Command {
 	cmd.Flags().BoolVar(&refresh, "refresh", false, "bypass the search cache")
 	return cmd
 }
+
+const searchResultLimit = 25
 
 func runSearch(ctx context.Context, d *Deps, query string, refresh bool) error {
 	var hits []hf.SearchHit
@@ -37,35 +39,74 @@ func runSearch(ctx context.Context, d *Deps, query string, refresh bool) error {
 	if err != nil {
 		return err
 	}
-
-	// Filter to whitelisted repos. Build a reverse index repo -> model once.
-	byRepo := make(map[string]models.Model, len(models.Whitelist))
-	for _, m := range models.Whitelist {
-		byRepo[m.HFRepo] = m
-	}
-	matched := make([]models.Model, 0, len(hits))
-	seen := make(map[string]bool)
-	for _, h := range hits {
-		if m, ok := byRepo[h.ID]; ok && !seen[m.ID] {
-			matched = append(matched, m)
-			seen[m.ID] = true
-		}
-	}
-	if len(matched) == 0 {
+	if len(hits) == 0 {
 		fmt.Fprintln(d.Stdout, "no matches")
 		return nil
 	}
-	sort.Slice(matched, func(i, j int) bool { return matched[i].ID < matched[j].ID })
+	if len(hits) > searchResultLimit {
+		hits = hits[:searchResultLimit]
+	}
+
+	// Reverse index: HF repo -> preferred Model.
+	byRepo := make(map[string]models.Model, len(models.PreferredIDs))
+	for _, m := range models.PreferredIDs {
+		byRepo[m.HFRepo] = m
+	}
+
+	type row struct {
+		preferred bool
+		id        string // short id (preferred) or full HF repo path
+		params    string
+		quants    string
+		repo      string
+	}
+	rows := make([]row, 0, len(hits))
+	for _, h := range hits {
+		var r row
+		if m, ok := byRepo[h.ID]; ok {
+			r = row{
+				preferred: true,
+				id:        m.ID,
+				params:    fmt.Sprintf("%dB", m.ParamsB),
+				repo:      m.HFRepo,
+			}
+		} else {
+			r = row{
+				preferred: false,
+				id:        h.ID,
+				params:    "?",
+				repo:      h.ID,
+			}
+		}
+		repo, rerr := d.HFClient.RepoInfo(ctx, r.repo)
+		if rerr == nil {
+			r.quants = strings.Join(availableQuantsFromSiblings(repo.Siblings), ",")
+		} else {
+			r.quants = "(unknown)"
+		}
+		rows = append(rows, r)
+	}
+
+	// Sort: preferred first (alphabetical by id), then non-preferred
+	// (preserve HF order, which is downloads-descending).
+	sort.SliceStable(rows, func(i, j int) bool {
+		if rows[i].preferred != rows[j].preferred {
+			return rows[i].preferred
+		}
+		if rows[i].preferred {
+			return rows[i].id < rows[j].id
+		}
+		return false
+	})
 
 	tw := tabwriter.NewWriter(d.Stdout, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(tw, "MODEL-ID\tPARAMS\tQUANTS\tREPO")
-	for _, m := range matched {
-		repo, rerr := d.HFClient.RepoInfo(ctx, m.HFRepo)
-		quants := "(unknown)"
-		if rerr == nil {
-			quants = strings.Join(availableQuantsFromSiblings(repo.Siblings), ",")
+	fmt.Fprintln(tw, "\tMODEL\tPARAMS\tQUANTS\tREPO")
+	for _, r := range rows {
+		marker := " "
+		if r.preferred {
+			marker = "*"
 		}
-		fmt.Fprintf(tw, "%s\t%dB\t%s\t%s\n", m.ID, m.ParamsB, quants, m.HFRepo)
+		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\n", marker, r.id, r.params, r.quants, r.repo)
 	}
 	return tw.Flush()
 }

@@ -12,4 +12,9 @@ type Metadata struct {
 	GGUFPath  string    `json:"gguf_path"`
 	SizeBytes int64     `json:"size_bytes"`
 	AddedAt   time.Time `json:"added_at"`
+
+	// Phase 2.5 additions; omitempty so legacy files decode cleanly
+	// (legacy entries lack these — selector will not run on them).
+	ParamsB int  `json:"params_b,omitempty"`
+	Arch    Arch `json:"arch,omitempty"`
 }

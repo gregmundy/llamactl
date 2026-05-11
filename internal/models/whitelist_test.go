@@ -5,30 +5,30 @@ import (
 	"testing"
 )
 
-func TestWhitelistEntriesWellFormed(t *testing.T) {
-	if len(Whitelist) == 0 {
-		t.Fatal("Whitelist is empty")
+func TestPreferredIDsEntriesWellFormed(t *testing.T) {
+	if len(PreferredIDs) == 0 {
+		t.Fatal("PreferredIDs is empty")
 	}
-	for id, m := range Whitelist {
+	for id, m := range PreferredIDs {
 		if m.ID != id {
-			t.Errorf("Whitelist[%q].ID = %q (must equal map key)", id, m.ID)
+			t.Errorf("PreferredIDs[%q].ID = %q (must equal map key)", id, m.ID)
 		}
 		if m.HFRepo == "" {
-			t.Errorf("Whitelist[%q].HFRepo empty", id)
+			t.Errorf("PreferredIDs[%q].HFRepo empty", id)
 		}
 		if m.ParamsB <= 0 {
-			t.Errorf("Whitelist[%q].ParamsB = %d", id, m.ParamsB)
+			t.Errorf("PreferredIDs[%q].ParamsB = %d", id, m.ParamsB)
 		}
 		if m.MaxCtx <= 0 {
-			t.Errorf("Whitelist[%q].MaxCtx = %d", id, m.MaxCtx)
+			t.Errorf("PreferredIDs[%q].MaxCtx = %d", id, m.MaxCtx)
 		}
 		if _, ok := QuantSizeTable[m.ParamsB]; !ok {
-			t.Errorf("Whitelist[%q].ParamsB = %d has no QuantSizeTable row", id, m.ParamsB)
+			t.Errorf("PreferredIDs[%q].ParamsB = %d has no QuantSizeTable row", id, m.ParamsB)
 		}
 		switch m.Arch {
 		case ArchQwen25, ArchLlama3, ArchMistral:
 		default:
-			t.Errorf("Whitelist[%q].Arch = %q (not a known Arch)", id, m.Arch)
+			t.Errorf("PreferredIDs[%q].Arch = %q (not a known Arch)", id, m.Arch)
 		}
 	}
 }
@@ -51,5 +51,26 @@ func TestLookupOrSuggestMiss(t *testing.T) {
 	msg := err.Error()
 	if !strings.Contains(msg, "qwen2.5-7b-instruct") {
 		t.Errorf("error should list valid IDs, got: %s", msg)
+	}
+}
+
+func TestArchFromGGUF(t *testing.T) {
+	tests := []struct {
+		in   string
+		want Arch
+	}{
+		{"llama", ArchLlama3},
+		{"qwen2", Arch("qwen2")}, // intentionally NOT ArchQwen25 — Qwen2 and Qwen2.5 differ
+		{"mistral", ArchMistral},
+		{"qwen3", Arch("qwen3")},   // pass-through for unknown
+		{"gemma", Arch("gemma")},   // pass-through for unknown
+		{"", Arch("")},             // pass-through for empty
+	}
+	for _, tc := range tests {
+		t.Run(tc.in, func(t *testing.T) {
+			if got := ArchFromGGUF(tc.in); got != tc.want {
+				t.Errorf("ArchFromGGUF(%q) = %q, want %q", tc.in, got, tc.want)
+			}
+		})
 	}
 }
