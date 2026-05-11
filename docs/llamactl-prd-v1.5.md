@@ -75,15 +75,20 @@ This tool compresses it to one command per phase.
   - Manually compiled with Metal support
   - Any custom path set via `llamactl config llama_server_path`
 
-## Curated model whitelist (v1)
+## Preferred model IDs (v1)
 
-Only these models are first-class supported:
+These short-ids ship with pre-tuned `ParamsB`, `Arch`, and `MaxCtx`
+metadata, enabling `add <short-id>` to auto-select a quant via §6.1:
+
 - Qwen 2.5 (3B, 7B, 14B Instruct + Coder)
 - Llama 3.1 (8B), 3.2 (3B), 3.3 (70B — only on 32GB+ hosts)
 - Mistral 7B Instruct v0.3
 
-Whitelist lives in source as a Go map; expanding it is a code change,
-not a config change.
+The preferred-IDs table lives in source as a Go map; adding entries is
+a code change. **However, `add` is not gated by this table** — any
+HuggingFace GGUF repo path (form: `<Org>/<Repo>`) is accepted with an
+explicit `--quant`. The downloaded GGUF's header supplies `ParamsB` and
+`Arch` for `list` display and future selector use.
 
 ## llama-server discovery
 
@@ -146,19 +151,28 @@ llamactl hardware
   whichever llama-server is resolved). Writes hardware.json. Idempotent.
 
 llamactl search <query> [--refresh]
-  Searches HuggingFace for matching whitelisted models. Returns ranked
-  list with available quantizations. Cached 24h; --refresh bypasses cache.
+  Searches HuggingFace for GGUF repos matching the query. Preferred
+  short-ids (see §4) are listed first and marked with `*`; other HF
+  results follow. Results capped at 25. Cached 24h; --refresh bypasses
+  cache.
 
-llamactl add <model-id> [--quant <preset>] [--ctx <int>]
-  Resolves model-id to a HuggingFace repo, picks the quant best fitting
-  available hardware and target context, downloads to shared storage,
-  verifies SHA256.
+llamactl add <input> [--quant <preset>] [--ctx <int>]
+  Two input forms:
+    - Preferred short-id (e.g. qwen2.5-7b-instruct): auto-selects quant
+      via the §6.1 algorithm, downloads from the canonical HF repo,
+      verifies SHA256, persists metadata with pre-tuned ParamsB/Arch.
+    - HuggingFace repo path (e.g. Qwen/Qwen3-8B-Instruct-GGUF, detected
+      by presence of "/"): requires explicit --quant. Downloads, verifies
+      SHA256, parses the GGUF header to derive ParamsB/Arch, persists
+      metadata under a derived id (basename lowercased, "-gguf" stripped).
 
   If the file already exists at the shared path with a matching SHA256,
   skips download and only writes llamactl metadata.
 
-  --quant: override automatic selection (Q4_K_M, Q5_K_M, etc.)
+  --quant: override automatic selection (Q4_K_M, Q5_K_M, etc.). Required
+           for HF-path inputs.
   --ctx:   target context size, affects quant calculation. Default 8192.
+           Ignored for HF-path inputs (no auto-selection).
 
 llamactl list
   Lists installed models: id, quant, size on disk, last served.
