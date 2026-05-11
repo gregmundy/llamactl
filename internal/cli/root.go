@@ -18,5 +18,6 @@ func NewRoot(deps *Deps, llamactlVersion string) *cobra.Command {
 	if deps.Stderr != nil {
 		root.SetErr(deps.Stderr)
 	}
+	root.AddCommand(newHardwareCmd(deps))
 	return root
 }
