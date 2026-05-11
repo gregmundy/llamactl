@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"os/exec"
 	"os/signal"
 	"syscall"
 	"time"
@@ -13,6 +14,7 @@ import (
 	"github.com/gregmundy/llamactl/internal/config"
 	"github.com/gregmundy/llamactl/internal/hardware"
 	"github.com/gregmundy/llamactl/internal/runner"
+	"github.com/gregmundy/llamactl/internal/server"
 )
 
 var llamactlVersion = "dev"
@@ -25,11 +27,23 @@ func main() {
 	}
 	run := runner.ExecRunner{}
 
+	resolver := server.Resolver{
+		Getenv:     os.Getenv,
+		LookPath:   exec.LookPath,
+		HomeDir:    paths.Home,
+		ConfigPath: paths.ConfigFile(),
+		Runner:     run,
+	}
+
 	deps := &cli.Deps{
 		Stdout:           os.Stdout,
 		Stderr:           os.Stderr,
 		HardwareDetector: &hardware.Detector{Runner: run},
 		HardwareJSONPath: paths.HardwareJSON(),
+		ServerResolver:   resolver,
+		ServerProber:     &server.Prober{Runner: run},
+		LookPath:         exec.LookPath,
+		Getenv:           os.Getenv,
 		Now:              time.Now,
 	}
 
