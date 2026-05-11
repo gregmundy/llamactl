@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
+	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -203,6 +204,100 @@ func TestIntegrationPhase2AddListRemove(t *testing.T) {
 	if _, _, err := runRoot(t, d, "remove", "qwen2.5-7b-instruct", "--purge"); err != nil {
 		t.Fatalf("remove: %v", err)
 	}
+	if _, err := os.Stat(gguf); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("GGUF should be gone after --purge; err=%v", err)
+	}
+}
+
+func TestIntegrationPhase25AddHFPath(t *testing.T) {
+	// Build a synthetic GGUF body that the real gguf.ReadHeader will parse.
+	var ggufBuf bytes.Buffer
+	ggufBuf.WriteString("GGUF")
+	binary.Write(&ggufBuf, binary.LittleEndian, uint32(3))                       // version
+	binary.Write(&ggufBuf, binary.LittleEndian, uint64(0))                       // tensor_count
+	binary.Write(&ggufBuf, binary.LittleEndian, uint64(2))                       // kv_count
+	binary.Write(&ggufBuf, binary.LittleEndian, uint64(len("general.architecture")))
+	ggufBuf.WriteString("general.architecture")
+	binary.Write(&ggufBuf, binary.LittleEndian, uint32(8))                       // string type
+	binary.Write(&ggufBuf, binary.LittleEndian, uint64(len("qwen3")))
+	ggufBuf.WriteString("qwen3")
+	binary.Write(&ggufBuf, binary.LittleEndian, uint64(len("general.parameter_count")))
+	ggufBuf.WriteString("general.parameter_count")
+	binary.Write(&ggufBuf, binary.LittleEndian, uint32(10))                      // u64 type
+	binary.Write(&ggufBuf, binary.LittleEndian, uint64(8030000000))
+	body := ggufBuf.Bytes()
+	sum := sha256.Sum256(body)
+	shaHex := hex.EncodeToString(sum[:])
+
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case strings.HasPrefix(r.URL.Path, "/api/models/Qwen/Qwen3-8B-Instruct-GGUF"):
+			fmt.Fprintf(w,
+				`{"id":"Qwen/Qwen3-8B-Instruct-GGUF","siblings":[{"rfilename":"qwen3-8b-instruct-q4_k_m.gguf","lfs":{"sha256":"%s","size":%d}}]}`,
+				shaHex, len(body))
+		case strings.Contains(r.URL.Path, "/resolve/main/"):
+			rng := r.Header.Get("Range")
+			off := int64(0)
+			if rng != "" {
+				_, _ = fmt.Sscanf(rng, "bytes=%d-", &off)
+				w.WriteHeader(http.StatusPartialContent)
+			}
+			w.Write(body[off:])
+		default:
+			w.WriteHeader(404)
+		}
+	}))
+	t.Cleanup(ts.Close)
+
+	configDir := t.TempDir()
+	sharedDir := t.TempDir()
+	cacheDir := t.TempDir()
+	hfClient := hf.NewClient(ts.URL, hf.NewCache(cacheDir), nil)
+	store := models.NewFileStore(filepath.Join(configDir, "models"))
+	d := &Deps{
+		HardwareDetector: fakeHardwareDetector{Info: hardware.Info{RAMBytes: 16 * (1 << 30)}},
+		HardwareJSONPath: filepath.Join(configDir, "hardware.json"),
+		HFClient:         hfClient,
+		Downloader:       &download.Downloader{Ranger: hfClient},
+		QuantSelector:    SelectorAdapter{},
+		ModelStore:       store,
+		FS:               OSFileSystem{},
+		ModelsConfigDir:  filepath.Join(configDir, "models"),
+		SharedModelsDir:  sharedDir,
+		Now:              fakeNow,
+	}
+
+	if _, _, err := runRoot(t, d, "add", "Qwen/Qwen3-8B-Instruct-GGUF", "--quant", "Q4_K_M"); err != nil {
+		t.Fatalf("add: %v", err)
+	}
+	listOut, _, err := runRoot(t, d, "list")
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	if !strings.Contains(listOut, "qwen3-8b-instruct") {
+		t.Errorf("list missing derived id:\n%s", listOut)
+	}
+	if !strings.Contains(listOut, "8B") {
+		t.Errorf("list missing 8B param from GGUF header:\n%s", listOut)
+	}
+
+	// Verify on-disk metadata captured ParamsB and Arch.
+	got, err := store.Get(context.Background(), "qwen3-8b-instruct")
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if got.ParamsB != 8 {
+		t.Errorf("ParamsB = %d, want 8", got.ParamsB)
+	}
+	if string(got.Arch) != "qwen3" {
+		t.Errorf("Arch = %q, want qwen3", got.Arch)
+	}
+
+	// Clean up via remove --purge.
+	if _, _, err := runRoot(t, d, "remove", "qwen3-8b-instruct", "--purge"); err != nil {
+		t.Fatalf("remove: %v", err)
+	}
+	gguf := filepath.Join(sharedDir, "qwen3-8b-instruct", "Q4_K_M.gguf")
 	if _, err := os.Stat(gguf); !errors.Is(err, os.ErrNotExist) {
 		t.Errorf("GGUF should be gone after --purge; err=%v", err)
 	}
