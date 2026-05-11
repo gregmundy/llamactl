@@ -53,6 +53,7 @@ func TestDetect_ReturnsZeroValueWhenAllCommandsFail(t *testing.T) {
 			"sysctl hw.memsize":                  errors.New("fail"),
 			"sysctl iogpu.wired_limit_mb":        errors.New("fail"),
 			"sysctl kern.hv_vmm_present":         errors.New("fail"),
+			"sw_vers -productVersion":            errors.New("fail"),
 		},
 	}
 	d := &Detector{Runner: runner}
@@ -118,5 +119,28 @@ func TestParseChipGen(t *testing.T) {
 		if got != c.want {
 			t.Errorf("parseChipGen(%q) = %q, want %q", c.in, got, c.want)
 		}
+	}
+}
+
+func TestDetect_ParsesRAMAndOSVersion(t *testing.T) {
+	runner := &fakeRunner{
+		t: t,
+		outputs: map[string]string{
+			"system_profiler SPHardwareDataType": readFixture(t, "sphardware_m2pro.json"),
+			"sysctl hw.memsize":                  "hw.memsize: 34359738368\n",
+			"sw_vers -productVersion":            "14.4.1\n",
+		},
+		errs: map[string]error{
+			"system_profiler SPDisplaysDataType": errors.New("not needed"),
+			"sysctl iogpu.wired_limit_mb":        errors.New("not needed"),
+			"sysctl kern.hv_vmm_present":         errors.New("not needed"),
+		},
+	}
+	info, _ := (&Detector{Runner: runner}).Detect(context.Background())
+	if info.RAMBytes != 34359738368 {
+		t.Fatalf("RAMBytes = %d, want 34359738368", info.RAMBytes)
+	}
+	if info.OSVersion != "14.4.1" {
+		t.Fatalf("OSVersion = %q, want %q", info.OSVersion, "14.4.1")
 	}
 }

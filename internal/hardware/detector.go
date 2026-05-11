@@ -11,6 +11,7 @@ import (
 	"encoding/json"
 	"io"
 	"regexp"
+	"strconv"
 	"strings"
 )
 
@@ -33,6 +34,8 @@ type Detector struct {
 func (d *Detector) Detect(ctx context.Context) (Info, error) {
 	var info Info
 	d.probeChip(ctx, &info)
+	d.probeRAM(ctx, &info)
+	d.probeOSVersion(ctx, &info)
 	return info, nil
 }
 
@@ -54,6 +57,31 @@ func (d *Detector) probeChip(ctx context.Context, info *Info) {
 	}
 	info.Chip = strings.TrimSpace(doc.SPHardwareDataType[0].ChipType)
 	info.ChipGen = parseChipGen(info.Chip)
+}
+
+func (d *Detector) probeRAM(ctx context.Context, info *Info) {
+	var stdout bytes.Buffer
+	if err := d.Runner.Run(ctx, "sysctl", []string{"hw.memsize"}, "", &stdout, io.Discard); err != nil {
+		return
+	}
+	// Output is "hw.memsize: 34359738368\n"
+	parts := strings.SplitN(strings.TrimSpace(stdout.String()), ":", 2)
+	if len(parts) != 2 {
+		return
+	}
+	n, err := strconv.ParseUint(strings.TrimSpace(parts[1]), 10, 64)
+	if err != nil {
+		return
+	}
+	info.RAMBytes = n
+}
+
+func (d *Detector) probeOSVersion(ctx context.Context, info *Info) {
+	var stdout bytes.Buffer
+	if err := d.Runner.Run(ctx, "sw_vers", []string{"-productVersion"}, "", &stdout, io.Discard); err != nil {
+		return
+	}
+	info.OSVersion = strings.TrimSpace(stdout.String())
 }
 
 var chipGenRe = regexp.MustCompile(`\bM(\d+)\b`)
