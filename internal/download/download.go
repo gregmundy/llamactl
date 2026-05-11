@@ -1,0 +1,160 @@
+package download
+
+import (
+	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"errors"
+	"fmt"
+	"io"
+	"io/fs"
+	"os"
+	"path/filepath"
+
+	"github.com/gregmundy/llamactl/internal/hf"
+	"golang.org/x/sys/unix"
+)
+
+// Ranger is the network seam — satisfied by *hf.Client. Declared locally so
+// internal/download does not depend on the broader cli.HFClient interface.
+type Ranger interface {
+	FetchRange(ctx context.Context, repoID, file string, offset, end int64, w io.Writer) error
+}
+
+// Request is one download job.
+type Request struct {
+	RepoID         string
+	File           string    // .gguf filename on HF
+	DestPath       string    // final on-disk path
+	ExpectedSHA256 string    // hex
+	TotalSize      int64     // for progress; 0 disables
+	Progress       *Progress // optional
+}
+
+// Downloader orchestrates a single Get: lock -> resume -> stream -> verify -> rename.
+type Downloader struct {
+	Ranger Ranger
+}
+
+// Get fetches DestPath from RepoID/File, resuming a .partial if present,
+// verifying SHA256, and atomically renaming on success.
+//
+// If DestPath already exists and its on-disk SHA matches ExpectedSHA256,
+// returns nil immediately (dedupe fast path — PRD AC#7).
+func (d *Downloader) Get(ctx context.Context, req Request) error {
+	if existing, err := verifyExisting(req.DestPath, req.ExpectedSHA256); err == nil && existing {
+		return nil
+	}
+
+	partial := req.DestPath + ".partial"
+	if err := os.MkdirAll(filepath.Dir(req.DestPath), 0o755); err != nil {
+		return fmt.Errorf("mkdir dest: %w", err)
+	}
+	f, err := os.OpenFile(partial, os.O_CREATE|os.O_RDWR, 0o644)
+	if err != nil {
+		return fmt.Errorf("open partial: %w", err)
+	}
+	closed := false
+	defer func() {
+		if !closed {
+			f.Close()
+		}
+	}()
+
+	if err := unix.Flock(int(f.Fd()), unix.LOCK_EX); err != nil {
+		return fmt.Errorf("flock partial: %w", err)
+	}
+
+	// Another process may have just finished while we waited on the lock.
+	if existing, err := verifyExisting(req.DestPath, req.ExpectedSHA256); err == nil && existing {
+		return nil
+	}
+
+	fi, err := f.Stat()
+	if err != nil {
+		return fmt.Errorf("stat partial: %w", err)
+	}
+	resumeOffset := fi.Size()
+
+	h := sha256.New()
+	if resumeOffset > 0 {
+		if _, err := f.Seek(0, io.SeekStart); err != nil {
+			return fmt.Errorf("seek partial: %w", err)
+		}
+		if _, err := io.CopyN(h, f, resumeOffset); err != nil {
+			return fmt.Errorf("re-hash partial: %w", err)
+		}
+		if _, err := f.Seek(0, io.SeekEnd); err != nil {
+			return fmt.Errorf("seek to end: %w", err)
+		}
+	}
+
+	if req.Progress != nil {
+		req.Progress.Initial = resumeOffset
+	}
+
+	writers := []io.Writer{f, h}
+	if req.Progress != nil {
+		writers = append(writers, req.Progress)
+	}
+	mw := io.MultiWriter(writers...)
+
+	err = d.Ranger.FetchRange(ctx, req.RepoID, req.File, resumeOffset, 0, mw)
+	if errors.Is(err, hf.ErrRangeNotSupported) {
+		if err := f.Truncate(0); err != nil {
+			return fmt.Errorf("truncate for restart: %w", err)
+		}
+		if _, err := f.Seek(0, io.SeekStart); err != nil {
+			return err
+		}
+		h.Reset()
+		if req.Progress != nil {
+			req.Progress.Initial = 0
+		}
+		err = d.Ranger.FetchRange(ctx, req.RepoID, req.File, 0, 0, io.MultiWriter(f, h))
+	}
+	if err != nil {
+		return fmt.Errorf("fetch range: %w", err)
+	}
+
+	if err := f.Sync(); err != nil {
+		return fmt.Errorf("fsync partial: %w", err)
+	}
+
+	got := hex.EncodeToString(h.Sum(nil))
+	if got != req.ExpectedSHA256 {
+		_ = os.Remove(partial)
+		return fmt.Errorf("sha256 mismatch: got %s, want %s", got, req.ExpectedSHA256)
+	}
+
+	// Rename while the flock is still held so that a concurrent waiter's
+	// post-lock verifyExisting check sees DestPath before we release.
+	if err := os.Rename(partial, req.DestPath); err != nil {
+		return fmt.Errorf("rename %s -> %s: %w", partial, req.DestPath, err)
+	}
+
+	if err := f.Close(); err != nil {
+		// fd was renamed away; treat close errors as non-fatal.
+		_ = err
+	}
+	closed = true
+	return nil
+}
+
+// verifyExisting returns (true, nil) if path exists and its sha256 == expected.
+func verifyExisting(path, expectedHex string) (bool, error) {
+	f, err := os.Open(path)
+	if errors.Is(err, fs.ErrNotExist) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	defer f.Close()
+	h := sha256.New()
+	if _, err := io.Copy(h, f); err != nil {
+		return false, err
+	}
+	got := hex.EncodeToString(h.Sum(nil))
+	return got == expectedHex, nil
+}
