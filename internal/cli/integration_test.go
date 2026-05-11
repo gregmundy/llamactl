@@ -3,15 +3,24 @@ package cli
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"io"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/gregmundy/llamactl/internal/download"
 	"github.com/gregmundy/llamactl/internal/hardware"
+	"github.com/gregmundy/llamactl/internal/hf"
+	"github.com/gregmundy/llamactl/internal/models"
 	"github.com/gregmundy/llamactl/internal/server"
 )
 
@@ -124,5 +133,77 @@ func TestEndToEnd_HardwareThenDoctorOnHealthyHost(t *testing.T) {
 	}
 	if !strings.HasSuffix(strings.TrimRight(out2, "\n"), "\nOK") {
 		t.Fatalf("expected OK suffix:\n%s", out2)
+	}
+}
+
+func TestIntegrationPhase2AddListRemove(t *testing.T) {
+	body := []byte("integration bytes")
+	sum := sha256.Sum256(body)
+	shaHex := hex.EncodeToString(sum[:])
+
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case strings.HasPrefix(r.URL.Path, "/api/models/Qwen/Qwen2.5-7B-Instruct-GGUF"):
+			fmt.Fprintf(w, `{"id":"Qwen/Qwen2.5-7B-Instruct-GGUF","siblings":[{"rfilename":"qwen2.5-7b-instruct-q4_k_m.gguf","lfs":{"sha256":"%s","size":%d}}]}`, shaHex, len(body))
+		case strings.Contains(r.URL.Path, "/resolve/main/"):
+			rng := r.Header.Get("Range")
+			off := int64(0)
+			if rng != "" {
+				_, _ = fmt.Sscanf(rng, "bytes=%d-", &off)
+				w.WriteHeader(http.StatusPartialContent)
+			}
+			w.Write(body[off:])
+		default:
+			w.WriteHeader(404)
+		}
+	}))
+	t.Cleanup(ts.Close)
+
+	configDir := t.TempDir()
+	sharedDir := t.TempDir()
+	cacheDir := t.TempDir()
+
+	hfClient := hf.NewClient(ts.URL, hf.NewCache(cacheDir), nil)
+	store := models.NewFileStore(filepath.Join(configDir, "models"))
+
+	d := &Deps{
+		HardwareDetector: fakeHardwareDetector{Info: hardware.Info{RAMBytes: 16 * (1 << 30)}},
+		HardwareJSONPath: filepath.Join(configDir, "hardware.json"),
+		HFClient:         hfClient,
+		Downloader:       &download.Downloader{Ranger: hfClient},
+		QuantSelector:    SelectorAdapter{},
+		ModelStore:       store,
+		FS:               OSFileSystem{},
+		ModelsConfigDir:  filepath.Join(configDir, "models"),
+		SharedModelsDir:  sharedDir,
+		Now:              fakeNow,
+	}
+
+	if _, _, err := runRoot(t, d, "add", "qwen2.5-7b-instruct"); err != nil {
+		t.Fatalf("add: %v", err)
+	}
+	listOut, _, err := runRoot(t, d, "list")
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	if !strings.Contains(listOut, "qwen2.5-7b-instruct") {
+		t.Errorf("list output missing model:\n%s", listOut)
+	}
+	// Verify dedupe on re-add: no second on-disk download (mtime stable).
+	gguf := filepath.Join(sharedDir, "qwen2.5-7b-instruct", "Q4_K_M.gguf")
+	fi1, _ := os.Stat(gguf)
+	if _, _, err := runRoot(t, d, "add", "qwen2.5-7b-instruct"); err != nil {
+		t.Fatalf("re-add: %v", err)
+	}
+	fi2, _ := os.Stat(gguf)
+	if fi1.ModTime() != fi2.ModTime() {
+		t.Errorf("re-add should not rewrite the file (dedupe fast path)")
+	}
+	// Remove --purge.
+	if _, _, err := runRoot(t, d, "remove", "qwen2.5-7b-instruct", "--purge"); err != nil {
+		t.Fatalf("remove: %v", err)
+	}
+	if _, err := os.Stat(gguf); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("GGUF should be gone after --purge; err=%v", err)
 	}
 }
