@@ -36,6 +36,7 @@ func (d *Detector) Detect(ctx context.Context) (Info, error) {
 	d.probeChip(ctx, &info)
 	d.probeRAM(ctx, &info)
 	d.probeOSVersion(ctx, &info)
+	d.probeIogpu(ctx, &info)
 	return info, nil
 }
 
@@ -82,6 +83,26 @@ func (d *Detector) probeOSVersion(ctx context.Context, info *Info) {
 		return
 	}
 	info.OSVersion = strings.TrimSpace(stdout.String())
+}
+
+func (d *Detector) probeIogpu(ctx context.Context, info *Info) {
+	var stdout bytes.Buffer
+	if err := d.Runner.Run(ctx, "sysctl", []string{"iogpu.wired_limit_mb"}, "", &stdout, io.Discard); err != nil {
+		return
+	}
+	s := strings.TrimSpace(stdout.String())
+	if s == "" {
+		return
+	}
+	parts := strings.SplitN(s, ":", 2)
+	if len(parts) != 2 {
+		return
+	}
+	n, err := strconv.Atoi(strings.TrimSpace(parts[1]))
+	if err != nil {
+		return
+	}
+	info.IogpuWiredLimitMB = n
 }
 
 var chipGenRe = regexp.MustCompile(`\bM(\d+)\b`)

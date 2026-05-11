@@ -144,3 +144,36 @@ func TestDetect_ParsesRAMAndOSVersion(t *testing.T) {
 		t.Fatalf("OSVersion = %q, want %q", info.OSVersion, "14.4.1")
 	}
 }
+
+func TestDetect_ParsesIogpuWiredLimit(t *testing.T) {
+	cases := []struct {
+		name string
+		out  string
+		want int
+	}{
+		{"set explicitly", "iogpu.wired_limit_mb: 24576\n", 24576},
+		{"set to zero", "iogpu.wired_limit_mb: 0\n", 0},
+		{"unset (empty)", "", 0},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			runner := &fakeRunner{
+				t: t,
+				outputs: map[string]string{
+					"sysctl iogpu.wired_limit_mb": c.out,
+				},
+				errs: map[string]error{
+					"system_profiler SPHardwareDataType": errors.New("not needed"),
+					"system_profiler SPDisplaysDataType": errors.New("not needed"),
+					"sysctl hw.memsize":                  errors.New("not needed"),
+					"sysctl kern.hv_vmm_present":         errors.New("not needed"),
+					"sw_vers -productVersion":            errors.New("not needed"),
+				},
+			}
+			info, _ := (&Detector{Runner: runner}).Detect(context.Background())
+			if info.IogpuWiredLimitMB != c.want {
+				t.Fatalf("IogpuWiredLimitMB = %d, want %d", info.IogpuWiredLimitMB, c.want)
+			}
+		})
+	}
+}
