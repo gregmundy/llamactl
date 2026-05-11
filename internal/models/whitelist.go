@@ -15,9 +15,9 @@ type Model struct {
 	MaxCtx  int // maximum context tokens supported by the model family
 }
 
-// Whitelist is the curated set of models llamactl supports in v1.
+// PreferredIDs is the curated set of models llamactl supports in v1.
 // Expanding it is a code change, per PRD §4.
-var Whitelist = map[string]Model{
+var PreferredIDs = map[string]Model{
 	"qwen2.5-3b-instruct":  {ID: "qwen2.5-3b-instruct", HFRepo: "Qwen/Qwen2.5-3B-Instruct-GGUF", Arch: ArchQwen25, ParamsB: 3, MaxCtx: 32768},
 	"qwen2.5-7b-instruct":  {ID: "qwen2.5-7b-instruct", HFRepo: "Qwen/Qwen2.5-7B-Instruct-GGUF", Arch: ArchQwen25, ParamsB: 7, MaxCtx: 32768},
 	"qwen2.5-14b-instruct": {ID: "qwen2.5-14b-instruct", HFRepo: "Qwen/Qwen2.5-14B-Instruct-GGUF", Arch: ArchQwen25, ParamsB: 14, MaxCtx: 32768},
@@ -34,11 +34,11 @@ var Whitelist = map[string]Model{
 // available ids if it isn't whitelisted. Error message is suitable for
 // printing to the user verbatim (no further formatting needed by callers).
 func LookupOrSuggest(id string) (Model, error) {
-	if m, ok := Whitelist[id]; ok {
+	if m, ok := PreferredIDs[id]; ok {
 		return m, nil
 	}
-	ids := make([]string, 0, len(Whitelist))
-	for k := range Whitelist {
+	ids := make([]string, 0, len(PreferredIDs))
+	for k := range PreferredIDs {
 		ids = append(ids, k)
 	}
 	sort.Strings(ids)

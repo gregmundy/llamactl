@@ -39,8 +39,8 @@ func runSearch(ctx context.Context, d *Deps, query string, refresh bool) error {
 	}
 
 	// Filter to whitelisted repos. Build a reverse index repo -> model once.
-	byRepo := make(map[string]models.Model, len(models.Whitelist))
-	for _, m := range models.Whitelist {
+	byRepo := make(map[string]models.Model, len(models.PreferredIDs))
+	for _, m := range models.PreferredIDs {
 		byRepo[m.HFRepo] = m
 	}
 	matched := make([]models.Model, 0, len(hits))
