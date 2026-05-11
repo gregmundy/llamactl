@@ -228,14 +228,17 @@ func TestRoot_VersionFlag(t *testing.T) {
 	}
 }
 
-func TestRoot_HelpListsNoSubcommandsYet(t *testing.T) {
+func TestRoot_HelpShowsShortDescription(t *testing.T) {
 	deps := &Deps{}
 	out, _, err := runRoot(t, deps, "--help")
 	if err != nil {
 		t.Fatalf("--help: %v", err)
 	}
-	if !strings.Contains(out, "llamactl") {
-		t.Fatalf("expected 'llamactl' in help output, got: %q", out)
+	// Cobra's default --help for a non-runnable, no-subcommand root prints
+	// only the Short string. Once subcommands land in later tasks, the full
+	// usage block (including "llamactl") will appear.
+	if !strings.Contains(out, "Run llama.cpp on Apple Silicon") {
+		t.Fatalf("expected Short string in help output, got: %q", out)
 	}
 }
 ```
