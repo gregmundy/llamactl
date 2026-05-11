@@ -2,7 +2,12 @@
 
 > Single-binary CLI for running llama.cpp on Apple Silicon.
 
-**Status:** Phase 1 (foundation + introspection). `hardware` and `doctor` work; `add` and `serve` arrive in later phases. See `docs/llamactl-prd-v1.5.md` for the spec.
+**Status:**
+- **Phase 1 (shipped 2026-05-10):** `hardware`, `doctor`
+- **Phase 2 (this branch):** `search`, `add`, `list`, `remove`
+- **Phase 3 (future):** `serve` + launchd, `status`, `stop`
+
+See `docs/llamactl-prd-v1.5.md` for the spec.
 
 ## Requirements
 
@@ -24,6 +29,10 @@ go build ./cmd/llamactl
 |---------|-------------|
 | `llamactl hardware` | Detect chip, RAM, OS, iogpu cap, VM state. Writes `~/.config/llamactl/hardware.json`. |
 | `llamactl doctor` | Verify bare-metal Apple Silicon, llama-server resolvable, version floor, iogpu cap. Exits 2 on any failure. |
+| `llamactl search <query> [--refresh]` | List whitelisted models matching a HuggingFace query, with available quants. |
+| `llamactl add <model-id> [--quant Q] [--ctx N]` | Auto-select the best quant for your host, download to `~/.local/share/llama-models/`, verify SHA256, write per-tool metadata. |
+| `llamactl list` | Show installed models, sizes, and on-disk status. |
+| `llamactl remove <model-id> [--purge]` | Drop per-tool metadata. With `--purge`, also delete the shared GGUF (best-effort cross-tool check). |
 
 ## Environment variables
 
@@ -31,6 +40,7 @@ go build ./cmd/llamactl
 |----------|--------|
 | `LLAMACTL_LLAMA_SERVER_PATH` | Override llama-server discovery |
 | `LLAMACTL_ALLOW_VM` | Permit running in a VM without Metal passthrough (NOT recommended) |
+| `HF_TOKEN` / `LLAMACTL_HF_TOKEN` | Optional HuggingFace bearer token, sent on every API request. Useful if you hit anonymous rate limits. |
 
 ## Development
 
