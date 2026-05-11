@@ -79,3 +79,44 @@ func TestInfo_JSONRoundTrip(t *testing.T) {
 		t.Fatalf("roundtrip mismatch:\n got %+v\nwant %+v", out, in)
 	}
 }
+
+func TestDetect_ParsesChipFromSystemProfiler(t *testing.T) {
+	runner := &fakeRunner{
+		t: t,
+		outputs: map[string]string{
+			"system_profiler SPHardwareDataType": readFixture(t, "sphardware_m2pro.json"),
+		},
+		errs: map[string]error{
+			"system_profiler SPDisplaysDataType": errors.New("not needed"),
+			"sysctl hw.memsize":                  errors.New("not needed"),
+			"sysctl iogpu.wired_limit_mb":        errors.New("not needed"),
+			"sysctl kern.hv_vmm_present":         errors.New("not needed"),
+			"sw_vers -productVersion":            errors.New("not needed"),
+		},
+	}
+	info, _ := (&Detector{Runner: runner}).Detect(context.Background())
+	if info.Chip != "Apple M2 Pro" {
+		t.Fatalf("Chip = %q, want %q", info.Chip, "Apple M2 Pro")
+	}
+	if info.ChipGen != "M2" {
+		t.Fatalf("ChipGen = %q, want %q", info.ChipGen, "M2")
+	}
+}
+
+func TestParseChipGen(t *testing.T) {
+	cases := []struct{ in, want string }{
+		{"Apple M1", "M1"},
+		{"Apple M1 Pro", "M1"},
+		{"Apple M2 Max", "M2"},
+		{"Apple M3 Ultra", "M3"},
+		{"Apple M4", "M4"},
+		{"Unknown", ""},
+		{"", ""},
+	}
+	for _, c := range cases {
+		got := parseChipGen(c.in)
+		if got != c.want {
+			t.Errorf("parseChipGen(%q) = %q, want %q", c.in, got, c.want)
+		}
+	}
+}

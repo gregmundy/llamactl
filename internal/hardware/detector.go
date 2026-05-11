@@ -6,8 +6,12 @@
 package hardware
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"io"
+	"regexp"
+	"strings"
 )
 
 // CommandRunner mirrors runner.CommandRunner — we redeclare locally to avoid
@@ -28,7 +32,39 @@ type Detector struct {
 // runner failure); today Detect never returns a non-nil error.
 func (d *Detector) Detect(ctx context.Context) (Info, error) {
 	var info Info
-	// Each probe is filled in by later tasks (7–10). The skeleton just
-	// ensures the public surface is stable.
+	d.probeChip(ctx, &info)
 	return info, nil
+}
+
+func (d *Detector) probeChip(ctx context.Context, info *Info) {
+	var stdout bytes.Buffer
+	if err := d.Runner.Run(ctx, "system_profiler", []string{"SPHardwareDataType", "-json"}, "", &stdout, io.Discard); err != nil {
+		return
+	}
+	var doc struct {
+		SPHardwareDataType []struct {
+			ChipType string `json:"chip_type"`
+		} `json:"SPHardwareDataType"`
+	}
+	if err := json.Unmarshal(stdout.Bytes(), &doc); err != nil {
+		return
+	}
+	if len(doc.SPHardwareDataType) == 0 {
+		return
+	}
+	info.Chip = strings.TrimSpace(doc.SPHardwareDataType[0].ChipType)
+	info.ChipGen = parseChipGen(info.Chip)
+}
+
+var chipGenRe = regexp.MustCompile(`\bM(\d+)\b`)
+
+// parseChipGen extracts the generation token ("M1", "M2", ...) from an
+// Apple Silicon chip name like "Apple M2 Pro". Returns "" when not Apple
+// Silicon or unparseable.
+func parseChipGen(chip string) string {
+	m := chipGenRe.FindStringSubmatch(chip)
+	if len(m) < 2 {
+		return ""
+	}
+	return "M" + m[1]
 }
