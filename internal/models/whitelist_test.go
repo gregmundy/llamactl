@@ -53,3 +53,24 @@ func TestLookupOrSuggestMiss(t *testing.T) {
 		t.Errorf("error should list valid IDs, got: %s", msg)
 	}
 }
+
+func TestArchFromGGUF(t *testing.T) {
+	tests := []struct {
+		in   string
+		want Arch
+	}{
+		{"llama", ArchLlama3},
+		{"qwen2", ArchQwen25},
+		{"mistral", ArchMistral},
+		{"qwen3", Arch("qwen3")},   // pass-through for unknown
+		{"gemma", Arch("gemma")},   // pass-through for unknown
+		{"", Arch("")},             // pass-through for empty
+	}
+	for _, tc := range tests {
+		t.Run(tc.in, func(t *testing.T) {
+			if got := ArchFromGGUF(tc.in); got != tc.want {
+				t.Errorf("ArchFromGGUF(%q) = %q, want %q", tc.in, got, tc.want)
+			}
+		})
+	}
+}
