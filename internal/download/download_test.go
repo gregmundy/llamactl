@@ -59,7 +59,7 @@ func TestDownloadHappyPath(t *testing.T) {
 		ExpectedSHA256: sha256hex(body),
 		TotalSize:      int64(len(body)),
 	}
-	if err := dl.Get(context.Background(), req); err != nil {
+	if err := dl.Get(context.Background(), &req); err != nil {
 		t.Fatalf("Get: %v", err)
 	}
 	got, err := os.ReadFile(req.DestPath)
@@ -68,6 +68,32 @@ func TestDownloadHappyPath(t *testing.T) {
 	}
 	if _, err := os.Stat(req.DestPath + ".partial"); !errors.Is(err, os.ErrNotExist) {
 		t.Errorf(".partial should be cleaned up; got err=%v", err)
+	}
+}
+
+// When DestPath already exists with matching SHA-256, Get must short-circuit
+// and signal the caller via Request.WasAlreadyPresent — no network call.
+func TestDownloadSignalsAlreadyPresent(t *testing.T) {
+	dir := t.TempDir()
+	body := mkBody(512)
+	dest := filepath.Join(dir, "f.gguf")
+	if err := os.WriteFile(dest, body, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// Ranger that fails if called — proves we hit the fast path.
+	ranger := &fakeRanger{body: nil}
+	dl := &Downloader{Ranger: ranger}
+	req := Request{
+		RepoID: "x/y", File: "f.gguf",
+		DestPath:       dest,
+		ExpectedSHA256: sha256hex(body),
+		TotalSize:      int64(len(body)),
+	}
+	if err := dl.Get(context.Background(), &req); err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if !req.WasAlreadyPresent {
+		t.Errorf("WasAlreadyPresent = false, want true on dedupe fast path")
 	}
 }
 
@@ -85,7 +111,7 @@ func TestDownloadResumeFromPartial(t *testing.T) {
 		ExpectedSHA256: sha256hex(body),
 		TotalSize:      int64(len(body)),
 	}
-	if err := dl.Get(context.Background(), req); err != nil {
+	if err := dl.Get(context.Background(), &req); err != nil {
 		t.Fatalf("Get: %v", err)
 	}
 	got, _ := os.ReadFile(req.DestPath)
@@ -104,7 +130,7 @@ func TestDownloadSHAMismatchUnlinksPartial(t *testing.T) {
 		ExpectedSHA256: strings.Repeat("0", 64), // wrong
 		TotalSize:      int64(len(body)),
 	}
-	err := dl.Get(context.Background(), req)
+	err := dl.Get(context.Background(), &req)
 	if err == nil {
 		t.Fatal("expected SHA mismatch error")
 	}
@@ -129,7 +155,7 @@ func TestDownloadNoRangeRestartsFromZero(t *testing.T) {
 		ExpectedSHA256: sha256hex(body),
 		TotalSize:      int64(len(body)),
 	}
-	if err := dl.Get(context.Background(), req); err != nil {
+	if err := dl.Get(context.Background(), &req); err != nil {
 		t.Fatalf("Get: %v", err)
 	}
 	got, _ := os.ReadFile(req.DestPath)
@@ -154,9 +180,9 @@ func TestDownloadFlockSerializesTwoCallers(t *testing.T) {
 	var wg sync.WaitGroup
 	wg.Add(2)
 	errs := make([]error, 2)
-	go func() { defer wg.Done(); errs[0] = dl.Get(context.Background(), req) }()
+	go func() { defer wg.Done(); errs[0] = dl.Get(context.Background(), &req) }()
 	time.Sleep(50 * time.Millisecond)
-	go func() { defer wg.Done(); errs[1] = dl.Get(context.Background(), req) }()
+	go func() { defer wg.Done(); errs[1] = dl.Get(context.Background(), &req) }()
 	time.Sleep(50 * time.Millisecond)
 	close(gate)
 	wg.Wait()
@@ -201,7 +227,7 @@ func TestDownloadOverHTTPTest(t *testing.T) {
 		ExpectedSHA256: sha256hex(body),
 		TotalSize:      int64(len(body)),
 	}
-	if err := dl.Get(context.Background(), req); err != nil {
+	if err := dl.Get(context.Background(), &req); err != nil {
 		t.Fatalf("Get: %v", err)
 	}
 	fi, err := os.Stat(req.DestPath)

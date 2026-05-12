@@ -22,6 +22,11 @@ type Ranger interface {
 }
 
 // Request is one download job.
+//
+// WasAlreadyPresent is an out-parameter: Downloader.Get sets it to true
+// when the dedupe fast-path fires (DestPath already exists with matching
+// SHA-256). Callers consult this to differentiate "downloaded" from
+// "already had it" in user-facing output without doing a second hash pass.
 type Request struct {
 	RepoID         string
 	File           string    // .gguf filename on HF
@@ -29,6 +34,8 @@ type Request struct {
 	ExpectedSHA256 string    // hex
 	TotalSize      int64     // for progress; 0 disables
 	Progress       *Progress // optional
+
+	WasAlreadyPresent bool // OUT: set by Get when dedupe fast-path fires
 }
 
 // Downloader orchestrates a single Get: lock -> resume -> stream -> verify -> rename.
@@ -40,9 +47,12 @@ type Downloader struct {
 // verifying SHA256, and atomically renaming on success.
 //
 // If DestPath already exists and its on-disk SHA matches ExpectedSHA256,
-// returns nil immediately (dedupe fast path — PRD AC#7).
-func (d *Downloader) Get(ctx context.Context, req Request) error {
+// returns nil immediately and sets req.WasAlreadyPresent = true
+// (dedupe fast path — PRD AC#7). Pointer receiver on req so callers
+// can observe that signal.
+func (d *Downloader) Get(ctx context.Context, req *Request) error {
 	if existing, err := verifyExisting(req.DestPath, req.ExpectedSHA256); err == nil && existing {
+		req.WasAlreadyPresent = true
 		return nil
 	}
 
@@ -67,6 +77,7 @@ func (d *Downloader) Get(ctx context.Context, req Request) error {
 
 	// Another process may have just finished while we waited on the lock.
 	if existing, err := verifyExisting(req.DestPath, req.ExpectedSHA256); err == nil && existing {
+		req.WasAlreadyPresent = true
 		return nil
 	}
 
