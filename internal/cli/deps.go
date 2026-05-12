@@ -10,7 +10,9 @@ import (
 	"github.com/gregmundy/llamactl/internal/download"
 	"github.com/gregmundy/llamactl/internal/hardware"
 	"github.com/gregmundy/llamactl/internal/hf"
+	"github.com/gregmundy/llamactl/internal/launchd"
 	"github.com/gregmundy/llamactl/internal/models"
+	"github.com/gregmundy/llamactl/internal/runner"
 	"github.com/gregmundy/llamactl/internal/server"
 )
 
@@ -63,6 +65,30 @@ type FileSystem interface {
 	MkdirAll(path string, perm os.FileMode) error
 }
 
+// LaunchdService wraps launchctl operations.
+type LaunchdService interface {
+	Load(ctx context.Context, plistPath string) error
+	Bootout(ctx context.Context, label string) error
+	Print(ctx context.Context, label string) (launchd.ServiceInfo, error)
+	List(ctx context.Context) ([]launchd.ServiceInfo, error)
+}
+
+// PortAllocator returns a bindable TCP port.
+type PortAllocator interface {
+	Free(preferred int) (int, error)
+}
+
+// ProcInspector queries the kernel about a running pid.
+type ProcInspector interface {
+	RSS(pid int) (int64, error)
+	Uptime(pid int) (time.Duration, error)
+}
+
+// TokRateReader computes tokens/sec from a per-model log file.
+type TokRateReader interface {
+	Rate(logPath string, window time.Duration, now time.Time) (float64, error)
+}
+
 // MinLlamaServerBuild is the lowest llama.cpp build number llamactl will
 // accept. Set to 1 (any parseable, positive build) because Homebrew uses
 // upstream release tags (~4500+) while llamavm-managed builds use cmake's
@@ -91,6 +117,18 @@ type Deps struct {
 	ModelsConfigDir string
 	SharedModelsDir string
 	HFCacheDir      string
+
+	LaunchdService LaunchdService
+	PortAllocator  PortAllocator
+	ProcInspector  ProcInspector
+	TokRateReader  TokRateReader
+
+	// Runner is the shared subprocess seam (Phase 1's runner.CommandRunner).
+	// Doctor's Tailscale check shells out via this; future commands can too.
+	Runner runner.CommandRunner
+
+	LaunchAgentsDir string // ~/Library/LaunchAgents
+	LogsDir         string // ~/Library/Logs/llamactl
 
 	LookPath func(name string) (string, error)
 	Getenv   func(key string) string
