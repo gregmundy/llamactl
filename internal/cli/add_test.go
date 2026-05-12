@@ -1,15 +1,14 @@
 package cli
 
 import (
-	"bytes"
 	"crypto/sha256"
-	"encoding/binary"
 	"encoding/hex"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/gregmundy/llamactl/internal/gguftest"
 	"github.com/gregmundy/llamactl/internal/hardware"
 	"github.com/gregmundy/llamactl/internal/hf"
 	"github.com/gregmundy/llamactl/internal/models"
@@ -144,48 +143,18 @@ func TestAddBootstrapsHardwareJSON(t *testing.T) {
 
 var _ = models.Q4_K_M // touch the package
 
-// helpers to build a synthetic GGUF body for HF-path tests
-
+// mustGGUFBody builds a synthetic GGUF body for HF-path tests, delegating
+// to the shared internal/gguftest package.
 func mustGGUFBody(t *testing.T, arch string, paramsCount uint64) []byte {
 	t.Helper()
-	var buf bytes.Buffer
-	buf.WriteString("GGUF")
-	if err := binary.Write(&buf, binary.LittleEndian, uint32(3)); err != nil {
-		t.Fatal(err)
-	}
-	if err := binary.Write(&buf, binary.LittleEndian, uint64(0)); err != nil { // tensor_count
-		t.Fatal(err)
-	}
-	var kv uint64
+	var kvs []gguftest.KV
 	if arch != "" {
-		kv++
+		kvs = append(kvs, gguftest.KV{Key: "general.architecture", Type: gguftest.TypeString, Value: arch})
 	}
 	if paramsCount > 0 {
-		kv++
+		kvs = append(kvs, gguftest.KV{Key: "general.parameter_count", Type: gguftest.TypeU64, Value: paramsCount})
 	}
-	if err := binary.Write(&buf, binary.LittleEndian, kv); err != nil {
-		t.Fatal(err)
-	}
-	if arch != "" {
-		writeKV(t, &buf, "general.architecture", uint32(8), func(b *bytes.Buffer) {
-			binary.Write(b, binary.LittleEndian, uint64(len(arch)))
-			b.WriteString(arch)
-		})
-	}
-	if paramsCount > 0 {
-		writeKV(t, &buf, "general.parameter_count", uint32(10), func(b *bytes.Buffer) {
-			binary.Write(b, binary.LittleEndian, paramsCount)
-		})
-	}
-	return buf.Bytes()
-}
-
-func writeKV(t *testing.T, buf *bytes.Buffer, key string, kind uint32, writeValue func(*bytes.Buffer)) {
-	t.Helper()
-	binary.Write(buf, binary.LittleEndian, uint64(len(key)))
-	buf.WriteString(key)
-	binary.Write(buf, binary.LittleEndian, kind)
-	writeValue(buf)
+	return gguftest.Build(t, 3, kvs...)
 }
 
 func makeHFPathDeps(t *testing.T, body []byte) (*Deps, *fakeHFClient, *fakeDownloader, *fakeModelStore, string) {

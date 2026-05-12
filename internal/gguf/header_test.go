@@ -2,80 +2,38 @@ package gguf
 
 import (
 	"bytes"
-	"encoding/binary"
 	"errors"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/gregmundy/llamactl/internal/gguftest"
 )
 
-// buildGGUF constructs a synthetic GGUF byte slice for tests.
+// buildGGUF wraps gguftest.Build with the legacy signature used by these
+// parser tests so the table-driven tests below stay terse.
+//
 // Pass empty arch ("") to omit the architecture KV.
 // Pass paramsCount=0 to omit the parameter_count KV.
 // Pass contextLength=0 to omit the <arch>.context_length KV.
-// If badType is true, appends a KV with value_type=array (unsupported).
+// If badType is true, appends a KV with an unsupported type code (99).
 func buildGGUF(t *testing.T, version uint32, arch string, paramsCount, contextLength uint64, badType bool) []byte {
 	t.Helper()
-	var buf bytes.Buffer
-	buf.WriteString("GGUF")
-	must(t, binary.Write(&buf, binary.LittleEndian, version))
-	must(t, binary.Write(&buf, binary.LittleEndian, uint64(0))) // tensor_count
-
-	var kvCount uint64
+	var kvs []gguftest.KV
 	if arch != "" {
-		kvCount++
+		kvs = append(kvs, gguftest.KV{Key: "general.architecture", Type: gguftest.TypeString, Value: arch})
 	}
 	if paramsCount > 0 {
-		kvCount++
+		kvs = append(kvs, gguftest.KV{Key: "general.parameter_count", Type: gguftest.TypeU64, Value: paramsCount})
 	}
 	if contextLength > 0 && arch != "" {
-		kvCount++
+		kvs = append(kvs, gguftest.KV{Key: arch + ".context_length", Type: gguftest.TypeU64, Value: contextLength})
 	}
 	if badType {
-		kvCount++
+		kvs = append(kvs, gguftest.KV{Key: "extra.bad", Type: 99, RawTypeOnly: true})
 	}
-	must(t, binary.Write(&buf, binary.LittleEndian, kvCount))
-
-	if arch != "" {
-		writeKVString(t, &buf, "general.architecture", arch)
-	}
-	if paramsCount > 0 {
-		writeKVU64(t, &buf, "general.parameter_count", paramsCount)
-	}
-	if contextLength > 0 && arch != "" {
-		writeKVU64(t, &buf, arch+".context_length", contextLength)
-	}
-	if badType {
-		writeKey(t, &buf, "extra.bad")
-		must(t, binary.Write(&buf, binary.LittleEndian, uint32(99))) // truly unsupported type
-	}
-	return buf.Bytes()
-}
-
-func must(t *testing.T, err error) {
-	t.Helper()
-	if err != nil {
-		t.Fatalf("write: %v", err)
-	}
-}
-
-func writeKey(t *testing.T, buf *bytes.Buffer, k string) {
-	must(t, binary.Write(buf, binary.LittleEndian, uint64(len(k))))
-	buf.WriteString(k)
-}
-
-func writeKVString(t *testing.T, buf *bytes.Buffer, key, value string) {
-	writeKey(t, buf, key)
-	must(t, binary.Write(buf, binary.LittleEndian, uint32(8))) // string
-	must(t, binary.Write(buf, binary.LittleEndian, uint64(len(value))))
-	buf.WriteString(value)
-}
-
-func writeKVU64(t *testing.T, buf *bytes.Buffer, key string, value uint64) {
-	writeKey(t, buf, key)
-	must(t, binary.Write(buf, binary.LittleEndian, uint32(10))) // u64
-	must(t, binary.Write(buf, binary.LittleEndian, value))
+	return gguftest.Build(t, version, kvs...)
 }
 
 func TestReadHeaderHappyPath(t *testing.T) {
@@ -142,27 +100,16 @@ func TestReadHeaderUnsupportedValueType(t *testing.T) {
 func TestReadHeaderSkipsArrayValues(t *testing.T) {
 	// Every real GGUF has tokenizer arrays. Confirm the parser walks past
 	// them and still picks up subsequent keys.
-	var buf bytes.Buffer
-	buf.WriteString("GGUF")
-	must(t, binary.Write(&buf, binary.LittleEndian, uint32(3)))
-	must(t, binary.Write(&buf, binary.LittleEndian, uint64(0))) // tensor_count
-	must(t, binary.Write(&buf, binary.LittleEndian, uint64(3))) // kv_count: arch, array, params
+	data := gguftest.Build(t, 3,
+		gguftest.KV{Key: "general.architecture", Type: gguftest.TypeString, Value: "llama"},
+		gguftest.KV{Key: "tokenizer.ggml.tokens", Type: gguftest.TypeArray, Value: gguftest.ArrayValue{
+			ElemType: gguftest.TypeString,
+			Items:    []any{"a", "b", "c"},
+		}},
+		gguftest.KV{Key: "general.parameter_count", Type: gguftest.TypeU64, Value: uint64(7615616512)},
+	)
 
-	// 1. general.architecture = "llama"
-	writeKVString(t, &buf, "general.architecture", "llama")
-	// 2. tokenizer.ggml.tokens = ["a", "b", "c"]  (an array of strings)
-	writeKey(t, &buf, "tokenizer.ggml.tokens")
-	must(t, binary.Write(&buf, binary.LittleEndian, uint32(9))) // array type
-	must(t, binary.Write(&buf, binary.LittleEndian, uint32(8))) // elem type = string
-	must(t, binary.Write(&buf, binary.LittleEndian, uint64(3))) // arrayLen
-	for _, s := range []string{"a", "b", "c"} {
-		must(t, binary.Write(&buf, binary.LittleEndian, uint64(len(s))))
-		buf.WriteString(s)
-	}
-	// 3. general.parameter_count = 7615616512  (must be reachable after the array)
-	writeKVU64(t, &buf, "general.parameter_count", 7615616512)
-
-	h, err := parseHeader(bytes.NewReader(buf.Bytes()))
+	h, err := parseHeader(bytes.NewReader(data))
 	if err != nil {
 		t.Fatalf("parseHeader: %v", err)
 	}

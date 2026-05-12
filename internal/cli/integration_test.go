@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
-	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -20,6 +19,7 @@ import (
 	"time"
 
 	"github.com/gregmundy/llamactl/internal/download"
+	"github.com/gregmundy/llamactl/internal/gguftest"
 	"github.com/gregmundy/llamactl/internal/hardware"
 	"github.com/gregmundy/llamactl/internal/hf"
 	"github.com/gregmundy/llamactl/internal/launchd"
@@ -214,21 +214,10 @@ func TestIntegrationPhase2AddListRemove(t *testing.T) {
 
 func TestIntegrationPhase25AddHFPath(t *testing.T) {
 	// Build a synthetic GGUF body that the real gguf.ReadHeader will parse.
-	var ggufBuf bytes.Buffer
-	ggufBuf.WriteString("GGUF")
-	binary.Write(&ggufBuf, binary.LittleEndian, uint32(3)) // version
-	binary.Write(&ggufBuf, binary.LittleEndian, uint64(0)) // tensor_count
-	binary.Write(&ggufBuf, binary.LittleEndian, uint64(2)) // kv_count
-	binary.Write(&ggufBuf, binary.LittleEndian, uint64(len("general.architecture")))
-	ggufBuf.WriteString("general.architecture")
-	binary.Write(&ggufBuf, binary.LittleEndian, uint32(8)) // string type
-	binary.Write(&ggufBuf, binary.LittleEndian, uint64(len("qwen3")))
-	ggufBuf.WriteString("qwen3")
-	binary.Write(&ggufBuf, binary.LittleEndian, uint64(len("general.parameter_count")))
-	ggufBuf.WriteString("general.parameter_count")
-	binary.Write(&ggufBuf, binary.LittleEndian, uint32(10)) // u64 type
-	binary.Write(&ggufBuf, binary.LittleEndian, uint64(8030000000))
-	body := ggufBuf.Bytes()
+	body := gguftest.Build(t, 3,
+		gguftest.KV{Key: "general.architecture", Type: gguftest.TypeString, Value: "qwen3"},
+		gguftest.KV{Key: "general.parameter_count", Type: gguftest.TypeU64, Value: uint64(8030000000)},
+	)
 	sum := sha256.Sum256(body)
 	shaHex := hex.EncodeToString(sum[:])
 
