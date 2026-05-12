@@ -142,6 +142,24 @@ func runFit(ctx context.Context, d *Deps, query string, install bool, ctxSize, l
 	sort.SliceStable(rows, func(i, j int) bool {
 		return fitRank(rows[i]) > fitRank(rows[j])
 	})
+
+	// Per-repo dedupe: show the best quant of each repo before showing alternate
+	// quants of any repo. Within each group (primary / alternates) the relative
+	// sort order is preserved so popularity-weighting still determines which repo
+	// surfaces first.
+	seen := make(map[string]bool, len(rows))
+	primary := make([]fitRow, 0, len(rows))
+	alternates := make([]fitRow, 0, len(rows))
+	for _, r := range rows {
+		if !seen[r.Repo] {
+			seen[r.Repo] = true
+			primary = append(primary, r)
+		} else {
+			alternates = append(alternates, r)
+		}
+	}
+	rows = append(primary, alternates...)
+
 	if len(rows) > limit {
 		rows = rows[:limit]
 	}
