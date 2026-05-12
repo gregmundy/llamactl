@@ -11,6 +11,7 @@ import (
 	"github.com/gregmundy/llamactl/internal/download"
 	"github.com/gregmundy/llamactl/internal/hardware"
 	"github.com/gregmundy/llamactl/internal/hf"
+	"github.com/gregmundy/llamactl/internal/launchd"
 	"github.com/gregmundy/llamactl/internal/models"
 )
 
@@ -112,4 +113,77 @@ func (s *fakeModelStore) Delete(_ context.Context, id string) error {
 	}
 	delete(s.M, id)
 	return nil
+}
+
+// --- Phase 3 fakes ---
+
+type fakeLaunchdService struct {
+	Loaded     []string // plist paths passed to Load
+	Booted     []string // labels passed to Bootout
+	Services   map[string]launchd.ServiceInfo // by label
+	ListResult []launchd.ServiceInfo
+	LoadErr    error
+	BootoutErr error
+}
+
+func (f *fakeLaunchdService) Load(_ context.Context, plistPath string) error {
+	f.Loaded = append(f.Loaded, plistPath)
+	return f.LoadErr
+}
+func (f *fakeLaunchdService) Bootout(_ context.Context, label string) error {
+	f.Booted = append(f.Booted, label)
+	return f.BootoutErr
+}
+func (f *fakeLaunchdService) Print(_ context.Context, label string) (launchd.ServiceInfo, error) {
+	if f.Services == nil {
+		return launchd.ServiceInfo{Label: label}, nil
+	}
+	info, ok := f.Services[label]
+	if !ok {
+		return launchd.ServiceInfo{Label: label}, nil
+	}
+	return info, nil
+}
+func (f *fakeLaunchdService) List(_ context.Context) ([]launchd.ServiceInfo, error) {
+	return f.ListResult, nil
+}
+
+type fakePortAllocator struct {
+	Allocated []int
+	Returns   map[int]int // preferred → returned
+}
+
+func (f *fakePortAllocator) Free(preferred int) (int, error) {
+	out := preferred
+	if v, ok := f.Returns[preferred]; ok {
+		out = v
+	}
+	f.Allocated = append(f.Allocated, out)
+	return out, nil
+}
+
+type fakeProcInspector struct {
+	RSSByPID    map[int]int64
+	UptimeByPID map[int]time.Duration
+}
+
+func (f *fakeProcInspector) RSS(pid int) (int64, error) {
+	if v, ok := f.RSSByPID[pid]; ok {
+		return v, nil
+	}
+	return 0, nil
+}
+func (f *fakeProcInspector) Uptime(pid int) (time.Duration, error) {
+	if v, ok := f.UptimeByPID[pid]; ok {
+		return v, nil
+	}
+	return 0, nil
+}
+
+type fakeTokRateReader struct {
+	RateByPath map[string]float64
+}
+
+func (f *fakeTokRateReader) Rate(logPath string, _ time.Duration, _ time.Time) (float64, error) {
+	return f.RateByPath[logPath], nil
 }
