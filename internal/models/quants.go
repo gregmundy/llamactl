@@ -32,6 +32,7 @@ type Arch string
 
 const (
 	ArchQwen25  Arch = "qwen2.5"
+	ArchQwen3   Arch = "qwen3"
 	ArchLlama3  Arch = "llama3"
 	ArchMistral Arch = "mistral"
 )
@@ -54,7 +55,13 @@ const (
 // gigabytes. Numbers are starting estimates from llama.cpp's GGUF
 // model-size docs + measured filesizes for the v1 preferred-IDs. The
 // implementer should re-validate against HF file sizes during Task 11.
+//
+// Keys are whole-billion buckets. Callers must round via math.Round at
+// lookup time (e.g. int(math.Round(model.ParamsB))). Sub-1B models
+// (ParamsB < 0.5) round to 0 and will miss — add a dedicated row if needed.
 var QuantSizeTable = map[int]map[Quant]float64{
+	1:  {Q5_K_M: 0.7, Q4_K_M: 0.6, Q4_K_S: 0.6, IQ4_XS: 0.5, IQ3_M: 0.5, IQ3_XS: 0.5, Q2_K: 0.4},
+	2:  {Q5_K_M: 1.4, Q4_K_M: 1.2, Q4_K_S: 1.1, IQ4_XS: 1.1, IQ3_M: 1.0, IQ3_XS: 0.9, Q2_K: 0.8},
 	3:  {Q5_K_M: 2.2, Q4_K_M: 1.9, Q4_K_S: 1.8, IQ4_XS: 1.7, IQ3_M: 1.5, IQ3_XS: 1.4, Q2_K: 1.3},
 	7:  {Q5_K_M: 5.1, Q4_K_M: 4.4, Q4_K_S: 4.1, IQ4_XS: 3.8, IQ3_M: 3.3, IQ3_XS: 3.1, Q2_K: 2.7},
 	8:  {Q5_K_M: 5.7, Q4_K_M: 4.9, Q4_K_S: 4.6, IQ4_XS: 4.3, IQ3_M: 3.8, IQ3_XS: 3.5, Q2_K: 3.0},
@@ -68,7 +75,10 @@ var QuantSizeTable = map[int]map[Quant]float64{
 // the same family, biasing the selector slightly toward smaller weight
 // quants. Acceptable for v1; refine when adding new models.
 var KVCachePerTokenKB = map[Arch]map[Quant]float64{
-	ArchQwen25:  {Q8_0: 0.5},
+	ArchQwen25: {Q8_0: 0.5},
+	// Qwen3 uses more aggressive GQA than Qwen2.5, resulting in a smaller
+	// KV cache footprint per token (0.4 vs 0.5 KiB/token).
+	ArchQwen3:   {Q8_0: 0.4},
 	ArchLlama3:  {Q8_0: 0.5},
 	ArchMistral: {Q8_0: 0.5},
 }

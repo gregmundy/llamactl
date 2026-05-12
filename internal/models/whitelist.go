@@ -19,6 +19,8 @@ type Model struct {
 // Adding entries is a code change; `add` is not gated by this table — any HF GGUF repo
 // path is accepted with explicit --quant (see PRD §4).
 var PreferredIDs = map[string]Model{
+	"qwen3-0.6b":           {ID: "qwen3-0.6b", HFRepo: "Qwen/Qwen3-0.6B-GGUF", Arch: ArchQwen3, ParamsB: 0.6, MaxCtx: 32768},
+	"qwen3-1.7b":           {ID: "qwen3-1.7b", HFRepo: "Qwen/Qwen3-1.7B-GGUF", Arch: ArchQwen3, ParamsB: 1.7, MaxCtx: 32768},
 	"qwen2.5-3b-instruct":  {ID: "qwen2.5-3b-instruct", HFRepo: "Qwen/Qwen2.5-3B-Instruct-GGUF", Arch: ArchQwen25, ParamsB: 3.0, MaxCtx: 32768},
 	"qwen2.5-7b-instruct":  {ID: "qwen2.5-7b-instruct", HFRepo: "Qwen/Qwen2.5-7B-Instruct-GGUF", Arch: ArchQwen25, ParamsB: 7.0, MaxCtx: 32768},
 	"qwen2.5-14b-instruct": {ID: "qwen2.5-14b-instruct", HFRepo: "Qwen/Qwen2.5-14B-Instruct-GGUF", Arch: ArchQwen25, ParamsB: 14.0, MaxCtx: 32768},

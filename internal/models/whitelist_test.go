@@ -27,7 +27,7 @@ func TestPreferredIDsEntriesWellFormed(t *testing.T) {
 			t.Errorf("PreferredIDs[%q].ParamsB = %g has no QuantSizeTable row", id, m.ParamsB)
 		}
 		switch m.Arch {
-		case ArchQwen25, ArchLlama3, ArchMistral:
+		case ArchQwen25, ArchQwen3, ArchLlama3, ArchMistral:
 		default:
 			t.Errorf("PreferredIDs[%q].Arch = %q (not a known Arch)", id, m.Arch)
 		}

@@ -10,6 +10,8 @@ func ArchFromGGUF(s string) Arch {
 		return ArchLlama3
 	case "mistral":
 		return ArchMistral
+	case "qwen3":
+		return ArchQwen3
 	default:
 		return Arch(s)
 	}
