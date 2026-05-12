@@ -233,6 +233,49 @@ func TestDoctor_PortConflicts_Failure(t *testing.T) {
 	}
 }
 
+// TestDoctor_PortConflicts_StoppedServiceNoFalsePositive verifies that a service
+// whose plist is still on disk but whose PID is 0 (stopped, not running) does
+// NOT trigger a port-conflict failure. Before the liveness filter was added,
+// doctor would report "<id> loaded but port N is free" for any stopped service
+// whose port happened to be unbound.
+func TestDoctor_PortConflicts_StoppedServiceNoFalsePositive(t *testing.T) {
+	tmp := t.TempDir()
+	plistPath := filepath.Join(tmp, "com.llamactl.gemma-4-e4b-it.plist")
+
+	// Grab a free port and immediately release it so it stays unbound.
+	l, err := net.Listen("tcp", ":0")
+	if err != nil {
+		t.Skip("could not bind :0, skipping")
+	}
+	port := l.Addr().(*net.TCPAddr).Port
+	l.Close()
+
+	writeMinimalPlist(t, plistPath, port)
+
+	d := healthyDoctorDeps(t)
+	d.LaunchAgentsDir = tmp
+	// Stopped service: PID=0 in List result; Services map has the label with PID=0
+	// so Print also returns PID=0.
+	d.LaunchdService = &fakeLaunchdService{
+		ListResult: []launchd.ServiceInfo{{
+			Label:     "com.llamactl.gemma-4-e4b-it",
+			PlistPath: plistPath,
+			PID:       0, // stopped
+			State:     "",
+		}},
+		Services: map[string]launchd.ServiceInfo{
+			"com.llamactl.gemma-4-e4b-it": {
+				Label: "com.llamactl.gemma-4-e4b-it",
+				PID:   0, // stopped
+			},
+		},
+	}
+	out, _, err := runRoot(t, d, "doctor")
+	if err != nil && strings.Contains(out, "✗ port conflicts") {
+		t.Errorf("stopped service (PID=0) should NOT trigger port-conflict false positive:\n%s", out)
+	}
+}
+
 func TestDoctor_ModelFiles_OK(t *testing.T) {
 	tmp := t.TempDir()
 	gguf := filepath.Join(tmp, "model.gguf")
