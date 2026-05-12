@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/gregmundy/llamactl/internal/config"
 	"github.com/gregmundy/llamactl/internal/hardware"
 	"github.com/gregmundy/llamactl/internal/launchd"
 	"github.com/gregmundy/llamactl/internal/models"
@@ -313,6 +314,102 @@ func TestServeDetachedUsesInjectedUserHomeDir(t *testing.T) {
 	}
 	if !strings.Contains(string(data), tempHome) {
 		t.Errorf("plist WorkingDirectory should contain injected tempHome %q; plist:\n%s", tempHome, data)
+	}
+}
+
+// TestServeAppendsAPIKeyFromConfig verifies that when Config.APIKey is set and
+// no LLAMACTL_API_KEY env var is present, runServe appends --api-key <token>
+// to the llama-server argv (and therefore into the plist ProgramArguments).
+func TestServeAppendsAPIKeyFromConfig(t *testing.T) {
+	d, ld, _ := makeServeDeps(t)
+	d.Config = &config.Config{APIKey: "sk-from-config"}
+	d.Getenv = func(key string) string { return "" } // env empty → fallback to config
+	ld.Services["com.llamactl.qwen2.5-7b-instruct"] = launchd.ServiceInfo{
+		Label: "com.llamactl.qwen2.5-7b-instruct",
+		PID:   12345,
+		State: "running",
+	}
+
+	_, _, err := runRoot(t, d, "serve", "qwen2.5-7b-instruct", "--detach")
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+
+	plistPath := filepath.Join(d.LaunchAgentsDir, "com.llamactl.qwen2.5-7b-instruct.plist")
+	data, readErr := os.ReadFile(plistPath)
+	if readErr != nil {
+		t.Fatalf("could not read plist: %v", readErr)
+	}
+	body := string(data)
+	if !strings.Contains(body, "--api-key") {
+		t.Errorf("plist should contain --api-key; got:\n%s", body)
+	}
+	if !strings.Contains(body, "sk-from-config") {
+		t.Errorf("plist should contain sk-from-config; got:\n%s", body)
+	}
+}
+
+// TestServeEnvAPIKeyBeatsConfig verifies that LLAMACTL_API_KEY env var takes
+// precedence over Config.APIKey when both are set.
+func TestServeEnvAPIKeyBeatsConfig(t *testing.T) {
+	d, ld, _ := makeServeDeps(t)
+	d.Config = &config.Config{APIKey: "sk-from-config"}
+	d.Getenv = func(key string) string {
+		if key == "LLAMACTL_API_KEY" {
+			return "sk-from-env"
+		}
+		return ""
+	}
+	ld.Services["com.llamactl.qwen2.5-7b-instruct"] = launchd.ServiceInfo{
+		Label: "com.llamactl.qwen2.5-7b-instruct",
+		PID:   12345,
+		State: "running",
+	}
+
+	_, _, err := runRoot(t, d, "serve", "qwen2.5-7b-instruct", "--detach")
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+
+	plistPath := filepath.Join(d.LaunchAgentsDir, "com.llamactl.qwen2.5-7b-instruct.plist")
+	data, readErr := os.ReadFile(plistPath)
+	if readErr != nil {
+		t.Fatalf("could not read plist: %v", readErr)
+	}
+	body := string(data)
+	if !strings.Contains(body, "sk-from-env") {
+		t.Errorf("plist should contain sk-from-env; got:\n%s", body)
+	}
+	if strings.Contains(body, "sk-from-config") {
+		t.Errorf("plist must NOT contain sk-from-config (env beats config); got:\n%s", body)
+	}
+}
+
+// TestServeNoAPIKeyWhenUnset verifies that when neither env nor config provide
+// an API key, --api-key is not present in the plist at all.
+func TestServeNoAPIKeyWhenUnset(t *testing.T) {
+	d, ld, _ := makeServeDeps(t)
+	// Config nil + Getenv returning empty → no api key
+	d.Config = nil
+	d.Getenv = func(key string) string { return "" }
+	ld.Services["com.llamactl.qwen2.5-7b-instruct"] = launchd.ServiceInfo{
+		Label: "com.llamactl.qwen2.5-7b-instruct",
+		PID:   12345,
+		State: "running",
+	}
+
+	_, _, err := runRoot(t, d, "serve", "qwen2.5-7b-instruct", "--detach")
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+
+	plistPath := filepath.Join(d.LaunchAgentsDir, "com.llamactl.qwen2.5-7b-instruct.plist")
+	data, readErr := os.ReadFile(plistPath)
+	if readErr != nil {
+		t.Fatalf("could not read plist: %v", readErr)
+	}
+	if strings.Contains(string(data), "--api-key") {
+		t.Errorf("plist must NOT contain --api-key when unset; got:\n%s", string(data))
 	}
 }
 

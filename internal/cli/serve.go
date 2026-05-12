@@ -119,6 +119,18 @@ func runServe(ctx context.Context, d *Deps, id string, requestedPort int, recipe
 
 	argv := recipes.FlagsFor(recipe, model, meta.Quant, meta.GGUFPath, hw, ver, caps, sizeGB, chosen, platform.Default{}.Cores())
 
+	// Resolve API key: env var takes precedence over config file.
+	apiKey := ""
+	if d.Getenv != nil {
+		apiKey = d.Getenv("LLAMACTL_API_KEY")
+	}
+	if apiKey == "" && d.Config != nil {
+		apiKey = d.Config.APIKey
+	}
+	if apiKey != "" {
+		argv = append(argv, "--api-key", apiKey)
+	}
+
 	// Update metadata.LastServedAt before launching. If launch fails the
 	// timestamp is slightly inaccurate; acceptable for v1.
 	now := time.Now
