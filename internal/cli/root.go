@@ -30,6 +30,7 @@ func NewRoot(deps *Deps, llamactlVersion string) *cobra.Command {
 	root.AddCommand(newStatusCmd(deps))
 	root.AddCommand(newCacheCmd(deps))
 	root.AddCommand(newConfigCmd(deps))
+	root.AddCommand(newUpdateCmd(deps))
 
 	// Cobra's SilenceUsage on the root does not auto-propagate; failing
 	// subcommands would print usage to stdout unless each child also has it
