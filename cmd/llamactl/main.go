@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
+	"path/filepath"
 	"syscall"
 	"time"
 
@@ -15,7 +16,9 @@ import (
 	"github.com/gregmundy/llamactl/internal/download"
 	"github.com/gregmundy/llamactl/internal/hardware"
 	"github.com/gregmundy/llamactl/internal/hf"
+	"github.com/gregmundy/llamactl/internal/launchd"
 	"github.com/gregmundy/llamactl/internal/models"
+	"github.com/gregmundy/llamactl/internal/proc"
 	"github.com/gregmundy/llamactl/internal/runner"
 	"github.com/gregmundy/llamactl/internal/server"
 )
@@ -65,6 +68,19 @@ func main() {
 	deps.ModelsConfigDir = paths.ModelsMetaDir()
 	deps.SharedModelsDir = paths.DataDir()
 	deps.HFCacheDir = paths.CacheDir()
+
+	// Phase 3 wiring.
+	launchAgentsDir := filepath.Join(paths.Home, "Library", "LaunchAgents")
+	logsDir := filepath.Join(paths.Home, "Library", "Logs", "llamactl")
+
+	launchdSvc := &launchd.Service{Runner: run, UID: os.Getuid()}
+	deps.LaunchdService = &cli.LaunchdServiceAdapter{Service: launchdSvc, AgentsDir: launchAgentsDir}
+	deps.PortAllocator = proc.Allocator{}
+	deps.ProcInspector = &proc.Inspector{Runner: run}
+	deps.TokRateReader = &proc.TailRate{}
+	deps.Runner = run
+	deps.LaunchAgentsDir = launchAgentsDir
+	deps.LogsDir = logsDir
 
 	root := cli.NewRoot(deps, llamactlVersion)
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
