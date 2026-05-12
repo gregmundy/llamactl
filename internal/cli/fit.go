@@ -35,6 +35,8 @@ type fitRow struct {
 	FreeGB    float64 `json:"free_gb,omitempty"`
 	DeficitGB float64 `json:"deficit_gb,omitempty"`
 	Note      string  `json:"note,omitempty"`
+	Downloads int     `json:"downloads,omitempty"`
+	Likes     int     `json:"likes,omitempty"`
 }
 
 func newFitCmd(d *Deps) *cobra.Command {
@@ -113,7 +115,7 @@ func runFit(ctx context.Context, d *Deps, query string, install bool, ctxSize, l
 				kvGB = 1.0
 			}
 			total := sizeGB + kvGB
-			row := fitRow{Repo: hit.ID, Quant: q, SizeGB: sizeGB}
+			row := fitRow{Repo: hit.ID, Quant: q, SizeGB: sizeGB, Downloads: hit.Downloads, Likes: hit.Likes}
 			switch {
 			case usable-total >= fitHeadroomGB:
 				row.Verdict = "ok"
@@ -162,7 +164,9 @@ func runFit(ctx context.Context, d *Deps, query string, install bool, ctxSize, l
 func fitRank(r fitRow) float64 {
 	switch r.Verdict {
 	case "ok":
-		return 1000 + r.FreeGB
+		// Within ✓: weight by downloads (canonical repos surface first);
+		// tiebreak on size (higher fidelity preferred among equally-popular).
+		return 100_000_000 + float64(r.Downloads) + r.SizeGB
 	case "tight":
 		return 100 - r.SizeGB
 	default:

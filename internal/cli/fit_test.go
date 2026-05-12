@@ -234,6 +234,38 @@ func TestFitJSON(t *testing.T) {
 	}
 }
 
+func TestFitRanksByDownloadsWithinOK(t *testing.T) {
+	hits := []hf.SearchHit{
+		{ID: "obscure/gemma-fork-GGUF", Downloads: 50},
+		{ID: "canonical/gemma-official-GGUF", Downloads: 50_000},
+	}
+	repos := map[string]hf.Repo{
+		"obscure/gemma-fork-GGUF": {Siblings: []hf.File{
+			{RFilename: "model-Q5_K_M.gguf", LFS: &hf.LFSInfo{Size: 3 << 30, SHA256: "a"}},
+		}},
+		"canonical/gemma-official-GGUF": {Siblings: []hf.File{
+			{RFilename: "model-Q5_K_M.gguf", LFS: &hf.LFSInfo{Size: 3 << 30, SHA256: "b"}},
+		}},
+	}
+	d := buildFitTestDeps(t, hits, repos, hardware.Info{RAMBytes: 32 << 30})
+	var out bytes.Buffer
+	d.Stdout = &out
+	cmd := newFitCmd(d)
+	cmd.SetArgs([]string{"gemma"})
+	if err := cmd.ExecuteContext(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	s := out.String()
+	canonicalIdx := strings.Index(s, "canonical/gemma-official-GGUF")
+	obscureIdx := strings.Index(s, "obscure/gemma-fork-GGUF")
+	if canonicalIdx == -1 || obscureIdx == -1 {
+		t.Fatalf("missing one of the repos:\n%s", s)
+	}
+	if canonicalIdx > obscureIdx {
+		t.Fatalf("canonical should rank above obscure; got order:\n%s", s)
+	}
+}
+
 func TestFitSkipsMultiShardAndNonGGUF(t *testing.T) {
 	hits := []hf.SearchHit{{ID: "user/sharded-model-GGUF"}}
 	repos := map[string]hf.Repo{
