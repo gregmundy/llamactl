@@ -114,22 +114,22 @@ func TestFetchLatestVersionRefreshFlagBypassesCache(t *testing.T) {
 	}
 }
 
-func TestVersionNewer(t *testing.T) {
+func TestUpdateAvailable(t *testing.T) {
 	cases := []struct {
-		a, b string
-		want bool
+		current, latest string
+		want            bool
 	}{
 		{"1.2.0", "1.3.0", true},
 		{"1.3.0", "1.3.0", false},
 		{"1.3.0", "1.2.0", false},
 		{"v1.3.0", "1.3.0", false},
 		{"1.2.9", "1.3.0", true},
-		{"1.9.0", "1.10.0", true}, // numeric comparison: 10 > 9 (b newer than a)
+		{"1.9.0", "1.10.0", true}, // numeric comparison: 10 > 9 (latest newer than current)
 	}
 	for _, c := range cases {
-		got := versionNewer(c.a, c.b)
+		got := updateAvailable(c.current, c.latest)
 		if got != c.want {
-			t.Errorf("versionNewer(%q, %q) = %v, want %v", c.a, c.b, got, c.want)
+			t.Errorf("updateAvailable(%q, %q) = %v, want %v", c.current, c.latest, got, c.want)
 		}
 	}
 }

@@ -92,12 +92,12 @@ func writeVersionCache(path string, c versionCache) error {
 	return os.WriteFile(path, data, 0o644)
 }
 
-// versionNewer reports whether b is strictly newer than a in semver-ish
-// ordering (i.e., "is there an update?" when a=current, b=latest).
+// updateAvailable reports whether latest is strictly newer than current in
+// semver-ish ordering (i.e., "is there an update available?").
 // Strips leading 'v' on either input. Returns false on parse failure.
-func versionNewer(a, b string) bool {
-	aa := parseSemver(a)
-	bb := parseSemver(b)
+func updateAvailable(current, latest string) bool {
+	aa := parseSemver(current)
+	bb := parseSemver(latest)
 	for i := 0; i < 3; i++ {
 		if bb[i] > aa[i] {
 			return true
