@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/gregmundy/llamactl/internal/launchd"
@@ -134,6 +135,10 @@ func runServeForeground(ctx context.Context, d *Deps, id, llamaServer string, ar
 	fmt.Fprintf(d.Stdout, "starting llama-server (recipe=%s, port=%d)…\n", recipeName, port)
 
 	cmd := exec.CommandContext(ctx, llamaServer, argv...)
+	// Override the default Cancel (SIGKILL) with SIGTERM + 5s grace.
+	// llama-server flushes Metal state on SIGTERM in well under that.
+	cmd.Cancel = func() error { return cmd.Process.Signal(syscall.SIGTERM) }
+	cmd.WaitDelay = 5 * time.Second
 	cmd.Stdout = io.MultiWriter(logFile, d.Stdout)
 	cmd.Stderr = io.MultiWriter(logFile, d.Stderr)
 	return cmd.Run()
