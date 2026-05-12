@@ -86,7 +86,7 @@ func TestEndToEnd_HardwareThenDoctorOnHealthyHost(t *testing.T) {
 		Stderr:           &bytes.Buffer{},
 		HardwareDetector: &hardware.Detector{Runner: r},
 		HardwareJSONPath: filepath.Join(tmp, "hardware.json"),
-		ServerResolver: server.Resolver{
+		ServerResolver: &server.Resolver{
 			Getenv: func(k string) string {
 				if k == "LLAMACTL_LLAMA_SERVER_PATH" {
 					return binPath

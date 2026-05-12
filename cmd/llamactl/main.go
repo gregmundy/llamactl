@@ -33,7 +33,7 @@ func main() {
 	}
 	run := runner.ExecRunner{}
 
-	resolver := server.Resolver{
+	resolver := &server.Resolver{
 		Getenv:     os.Getenv,
 		LookPath:   exec.LookPath,
 		HomeDir:    paths.Home,

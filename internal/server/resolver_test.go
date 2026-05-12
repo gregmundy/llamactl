@@ -158,6 +158,77 @@ func TestResolve_BrewFifth(t *testing.T) {
 	}
 }
 
+// Resolve must memoize successful results so back-to-back doctor checks
+// (resolvable + version floor) don't repeat the LookPath/Stat work.
+func TestResolverMemoizes(t *testing.T) {
+	tmp := t.TempDir()
+	envPath := filepath.Join(tmp, "from-env", "llama-server")
+	touch(t, envPath)
+
+	calls := 0
+	r := &Resolver{
+		Getenv: func(k string) string {
+			if k == "LLAMACTL_LLAMA_SERVER_PATH" {
+				calls++
+				return envPath
+			}
+			return ""
+		},
+		LookPath:   func(string) (string, error) { return "", errors.New("nope") },
+		HomeDir:    tmp,
+		ConfigPath: "/does/not/exist/config.yaml",
+		Runner:     &fakeRunner{errByCmd: map[string]error{"brew --prefix llama.cpp": errors.New("nope")}},
+	}
+	if _, err := r.Resolve(context.Background()); err != nil {
+		t.Fatalf("first Resolve: %v", err)
+	}
+	if _, err := r.Resolve(context.Background()); err != nil {
+		t.Fatalf("second Resolve: %v", err)
+	}
+	if calls != 1 {
+		t.Fatalf("Getenv (LLAMACTL_LLAMA_SERVER_PATH) called %d times, want 1 (memoization missed)", calls)
+	}
+}
+
+// Failed Resolves stay re-tryable — only successes are cached.
+func TestResolverDoesNotCacheFailures(t *testing.T) {
+	tmp := t.TempDir()
+	envPath := filepath.Join(tmp, "from-env", "llama-server")
+
+	lookups := 0
+	r := &Resolver{
+		Getenv: func(string) string { return "" },
+		LookPath: func(string) (string, error) {
+			lookups++
+			return "", errors.New("nope")
+		},
+		HomeDir:    "/no/such",
+		ConfigPath: "/no/such",
+		Runner:     &fakeRunner{errByCmd: map[string]error{"brew --prefix llama.cpp": errors.New("not installed")}},
+	}
+	if _, err := r.Resolve(context.Background()); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("first: want ErrNotFound, got %v", err)
+	}
+	// Now make it succeed.
+	touch(t, envPath)
+	r.Getenv = func(k string) string {
+		if k == "LLAMACTL_LLAMA_SERVER_PATH" {
+			return envPath
+		}
+		return ""
+	}
+	res, err := r.Resolve(context.Background())
+	if err != nil {
+		t.Fatalf("second: %v", err)
+	}
+	if res.Path != envPath {
+		t.Errorf("Path = %q, want %q (failure was cached!)", res.Path, envPath)
+	}
+	if lookups < 1 {
+		t.Errorf("LookPath calls = %d; expected at least 1 on the first (failing) Resolve", lookups)
+	}
+}
+
 func TestResolve_NoneReturnsErrNotFound(t *testing.T) {
 	r := Resolver{
 		Getenv:     func(string) string { return "" },
