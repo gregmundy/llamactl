@@ -11,6 +11,8 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strconv"
+	"strings"
 )
 
 var (
@@ -101,6 +103,7 @@ func parseHeader(r io.Reader) (Header, error) {
 		return Header{}, fmt.Errorf("implausible kv_count %d (exceeds %d)", kvCount, maxKVCount)
 	}
 	entries := make([]kvEntry, 0, kvCount)
+	var sizeLabel string
 	for i := uint64(0); i < kvCount; i++ {
 		key, err := readString(br)
 		if err != nil {
@@ -122,10 +125,33 @@ func parseHeader(r io.Reader) (Header, error) {
 				h.Architecture = s
 			}
 		case "general.parameter_count":
-			if v, ok := value.(uint64); ok {
+			switch v := value.(type) {
+			case uint64:
 				h.ParamsCount = v
+			case int64:
+				if v >= 0 {
+					h.ParamsCount = uint64(v)
+				}
+			case uint32:
+				h.ParamsCount = uint64(v)
+			case int32:
+				if v >= 0 {
+					h.ParamsCount = uint64(v)
+				}
+			}
+		case "general.size_label":
+			if s, ok := value.(string); ok {
+				sizeLabel = s
 			}
 		}
+	}
+
+	// Fallback: derive ParamsCount from general.size_label when
+	// parameter_count was absent or unparseable. Phase 5 finding:
+	// Unsloth/community quants for Gemma 4 and Qwen 2.5 omit
+	// general.parameter_count but carry size_label as a string ("3.4B").
+	if h.ParamsCount == 0 && sizeLabel != "" {
+		h.ParamsCount = parseSizeLabel(sizeLabel)
 	}
 
 	if h.Architecture != "" {
@@ -145,6 +171,37 @@ func parseHeader(r io.Reader) (Header, error) {
 	}
 
 	return h, nil
+}
+
+// parseSizeLabel converts strings like "3.4B", "7.5B", "650M", "31B", "1.2T",
+// "500K" into a raw parameter count. Suffix is K/M/B/T (case-insensitive).
+// Returns 0 if the input doesn't match the expected shape; callers treat 0
+// as "unparseable, leave fallback alone".
+func parseSizeLabel(s string) uint64 {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return 0
+	}
+	// Last char is the multiplier suffix.
+	last := s[len(s)-1]
+	var mult float64
+	switch last {
+	case 'K', 'k':
+		mult = 1e3
+	case 'M', 'm':
+		mult = 1e6
+	case 'B', 'b':
+		mult = 1e9
+	case 'T', 't':
+		mult = 1e12
+	default:
+		return 0
+	}
+	n, err := strconv.ParseFloat(s[:len(s)-1], 64)
+	if err != nil || n < 0 {
+		return 0
+	}
+	return uint64(n * mult)
 }
 
 func readString(r io.Reader) (string, error) {
