@@ -92,6 +92,8 @@ func main() {
 	deps.LaunchAgentsDir = launchAgentsDir
 	deps.LogsDir = logsDir
 
+	deps.LlamactlVersion = llamactlVersion
+
 	root := cli.NewRoot(deps, llamactlVersion)
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()

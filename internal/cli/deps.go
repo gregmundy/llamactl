@@ -143,6 +143,8 @@ type Deps struct {
 	Now         func() time.Time
 	Sleep       func(d time.Duration) <-chan time.Time
 	UserHomeDir func() (string, error)
+
+	LlamactlVersion string // set via ldflags; used by doctor latestVersionCheck
 }
 
 // OSFileSystem is the production FileSystem backed by package os.

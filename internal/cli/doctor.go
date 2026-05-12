@@ -105,6 +105,7 @@ func buildDoctorChecks(ctx context.Context, deps *Deps) ([]doctorCheck, string) 
 		logFilesNotOversizedCheck(deps),
 		hfCacheSizeCheck(deps),
 		authOnPublicBindCheck(deps),
+		latestVersionCheck(deps),
 	}
 	return checks, ""
 }
@@ -519,6 +520,35 @@ func authOnPublicBindCheck(deps *Deps) doctorCheck {
 				return false, svc.Label + " binds publicly without --api-key"
 			}
 			return true, ""
+		},
+	}
+}
+
+// latestVersionCheck is an info-level check that reports whether the running
+// llamactl is on the latest published version. It reads the on-disk version
+// cache populated by `llamactl update` (or `update --refresh`); it never makes
+// an HTTP call itself. The check always returns ok=true so it never blocks
+// doctor — it is purely informational.
+func latestVersionCheck(d *Deps) doctorCheck {
+	return doctorCheck{
+		label: "llamactl version",
+		run: func(_ context.Context, deps *Deps) (bool, string) {
+			path := versionCachePath(deps)
+			if path == "" {
+				return true, "(version check skipped: no cache yet)"
+			}
+			cached, err := readVersionCache(path)
+			if err != nil {
+				return true, "(version check skipped: no cache yet)"
+			}
+			if deps.Now().Sub(cached.CheckedAt) > versionCacheTTL {
+				return true, "(version check stale; run 'llamactl update --refresh')"
+			}
+			if updateAvailable(deps.LlamactlVersion, cached.Latest) {
+				return true, fmt.Sprintf("update available: %s → %s",
+					normalizeWithV(deps.LlamactlVersion), normalizeWithV(cached.Latest))
+			}
+			return true, fmt.Sprintf("on latest (%s)", normalizeWithV(deps.LlamactlVersion))
 		},
 	}
 }

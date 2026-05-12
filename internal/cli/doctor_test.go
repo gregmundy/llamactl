@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"net"
@@ -599,5 +600,62 @@ func TestAuthCheckStoppedServiceSkipped(t *testing.T) {
 	ok, _ := check.run(context.Background(), deps)
 	if !ok {
 		t.Fatal("expected ✓ when only stopped services exist (no live public unauthenticated endpoint)")
+	}
+}
+
+func TestLatestVersionCheckOnLatest(t *testing.T) {
+	tempDir := t.TempDir()
+	raw, _ := json.Marshal(versionCache{Latest: "1.3.0", CheckedAt: time.Now()})
+	os.WriteFile(filepath.Join(tempDir, "last-version-check.json"), raw, 0o644)
+	deps := &Deps{HFCacheDir: tempDir, LlamactlVersion: "v1.3.0", Now: time.Now}
+	check := latestVersionCheck(deps)
+	ok, detail := check.run(context.Background(), deps)
+	if !ok {
+		t.Fatal("expected pass")
+	}
+	if !strings.Contains(detail, "on latest") {
+		t.Fatalf("missing 'on latest': %q", detail)
+	}
+}
+
+func TestLatestVersionCheckUpdateAvailable(t *testing.T) {
+	tempDir := t.TempDir()
+	raw, _ := json.Marshal(versionCache{Latest: "1.4.0", CheckedAt: time.Now()})
+	os.WriteFile(filepath.Join(tempDir, "last-version-check.json"), raw, 0o644)
+	deps := &Deps{HFCacheDir: tempDir, LlamactlVersion: "v1.3.0", Now: time.Now}
+	check := latestVersionCheck(deps)
+	ok, detail := check.run(context.Background(), deps)
+	if !ok {
+		t.Fatal("expected pass (info-level)")
+	}
+	if !strings.Contains(detail, "update available") {
+		t.Fatalf("missing 'update available': %q", detail)
+	}
+}
+
+func TestLatestVersionCheckSoftPassOnMissingCache(t *testing.T) {
+	deps := &Deps{HFCacheDir: filepath.Join(t.TempDir(), "no-cache-here"), LlamactlVersion: "v1.3.0", Now: time.Now}
+	check := latestVersionCheck(deps)
+	ok, detail := check.run(context.Background(), deps)
+	if !ok {
+		t.Fatal("expected soft-pass")
+	}
+	if !strings.Contains(detail, "skipped") {
+		t.Fatalf("missing 'skipped': %q", detail)
+	}
+}
+
+func TestLatestVersionCheckStaleCache(t *testing.T) {
+	tempDir := t.TempDir()
+	raw, _ := json.Marshal(versionCache{Latest: "1.3.0", CheckedAt: time.Now().Add(-48 * time.Hour)})
+	os.WriteFile(filepath.Join(tempDir, "last-version-check.json"), raw, 0o644)
+	deps := &Deps{HFCacheDir: tempDir, LlamactlVersion: "v1.3.0", Now: time.Now}
+	check := latestVersionCheck(deps)
+	ok, detail := check.run(context.Background(), deps)
+	if !ok {
+		t.Fatal("expected soft-pass")
+	}
+	if !strings.Contains(detail, "stale") {
+		t.Fatalf("missing 'stale': %q", detail)
 	}
 }
