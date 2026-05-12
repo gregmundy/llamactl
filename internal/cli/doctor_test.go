@@ -35,6 +35,10 @@ func (f *fakeProber) Probe(_ context.Context, _ string) (server.Version, error) 
 	return f.ver, f.err
 }
 
+func (f *fakeProber) Capabilities(_ context.Context, _ string) (server.Capabilities, error) {
+	return server.Capabilities{}, nil
+}
+
 // healthyDoctorDeps returns a Deps wired so every doctor check passes.
 // Individual tests override one field to drive a single check to fail.
 func healthyDoctorDeps(t *testing.T) *Deps {

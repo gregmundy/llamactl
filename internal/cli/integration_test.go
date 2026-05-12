@@ -391,3 +391,86 @@ func TestIntegrationPhase3DetachedRoundtrip(t *testing.T) {
 		t.Errorf("plist should be gone after stop; err=%v", err)
 	}
 }
+
+// TestIntegrationPhase4ForegroundGracefulShutdown verifies that canceling
+// the context during a foreground serve sends SIGTERM (not SIGKILL) to
+// the child process and lets it log "shutting down" before exit.
+func TestIntegrationPhase4ForegroundGracefulShutdown(t *testing.T) {
+	tmp := t.TempDir()
+	store := models.NewFileStore(filepath.Join(tmp, "models"))
+	_ = store.Put(context.Background(), models.Metadata{
+		ID:        "fake-tiny",
+		Quant:     models.Q4_K_M,
+		Repo:      "fake/fake",
+		GGUFPath:  filepath.Join(tmp, "model.gguf"),
+		SizeBytes: 1000,
+		ParamsB:   1,
+		Arch:      models.ArchQwen25,
+		AddedAt:   fakeNow(),
+	})
+	_ = os.WriteFile(filepath.Join(tmp, "model.gguf"), []byte("xxx"), 0o644)
+
+	fakeBin := buildFakeLlamaServer(t)
+	logsDir := filepath.Join(tmp, "Logs")
+
+	d := &Deps{
+		HardwareDetector: fakeHardwareDetector{Info: hardware.Info{RAMBytes: 16 * (1 << 30)}},
+		HardwareJSONPath: filepath.Join(tmp, "hardware.json"),
+		ServerResolver:   fakeResolverPhase3{Path: fakeBin},
+		ServerProber:     fakeProberPhase3{Version: server.Version{Build: 4500}, Caps: server.Capabilities{FlashAttnTristate: true}},
+		ModelStore:       store,
+		LaunchdService:   &fakeLaunchdService{},
+		PortAllocator:    proc.Allocator{},
+		ProcInspector:    &fakeProcInspector{},
+		TokRateReader:    &fakeTokRateReader{},
+		LaunchAgentsDir:  filepath.Join(tmp, "LaunchAgents"),
+		LogsDir:          logsDir,
+		Now:              fakeNow,
+		FS:               OSFileSystem{},
+		Stdout:           io.Discard,
+		Stderr:           io.Discard,
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+
+	// Run serve in a goroutine; it'll block on cmd.Run().
+	done := make(chan error, 1)
+	go func() {
+		root := NewRoot(d, "test")
+		root.SetArgs([]string{"serve", "fake-tiny"})
+		root.SetOut(io.Discard)
+		root.SetErr(io.Discard)
+		done <- root.ExecuteContext(ctx)
+	}()
+
+	// Wait for the fake binary to print "loaded model" to its log file.
+	logPath := filepath.Join(logsDir, "fake-tiny.log")
+	deadline := time.Now().Add(10 * time.Second)
+	for time.Now().Before(deadline) {
+		data, _ := os.ReadFile(logPath)
+		if bytes.Contains(data, []byte("loaded model")) {
+			break
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+
+	// Cancel the context — should trigger SIGTERM via cmd.Cancel.
+	cancel()
+
+	// Wait for serve to return.
+	select {
+	case <-done:
+	case <-time.After(10 * time.Second):
+		t.Fatal("serve did not return within 10s of context cancel")
+	}
+
+	// Log must contain "shutting down" — proves SIGTERM was delivered,
+	// not SIGKILL (SIGKILL gives no chance to print).
+	data, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatalf("read log: %v", err)
+	}
+	if !bytes.Contains(data, []byte("shutting down")) {
+		t.Errorf("log missing 'shutting down' — SIGTERM may not have been delivered\nlog:\n%s", data)
+	}
+}

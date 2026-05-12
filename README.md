@@ -1,38 +1,75 @@
 # llamactl
 
-> Single-binary CLI for running llama.cpp on Apple Silicon.
+Single-binary Go CLI for running llama.cpp on Apple Silicon. Handles model download,
+hardware-aware quantization selection, recipe-based llama-server invocation, launchd
+lifecycle, and a doctor that catches the configuration mistakes people actually make.
 
-**Status:**
-- **Phase 1 (shipped 2026-05-10):** `hardware`, `doctor`
-- **Phase 2 (this branch):** `search`, `add`, `list`, `remove`
-- **Phase 3 (future):** `serve` + launchd, `status`, `stop`
+Built and tested on M-series Macs. Linux and Intel are out of scope for v1.
 
-See `docs/llamactl-prd-v1.5.md` for the spec.
-
-## Requirements
-
-- macOS 14+ on Apple Silicon
-- A `llama-server` binary on PATH (via `brew install llama.cpp` or `brew install gregmundy/tap/llamavm && llamavm install latest`)
-
-## Install (development)
+## Install
 
 ```bash
-git clone https://github.com/gregmundy/llamactl
-cd llamactl
-go build ./cmd/llamactl
-./llamactl --help
+brew install gregmundy/tap/llamactl
+```
+
+llamactl is a Homebrew Cask (prebuilt unsigned binary, ~3 MB). It does NOT auto-install
+`llama-server` — you bring your own:
+
+```bash
+brew install llama.cpp                          # one option
+brew install gregmundy/tap/llamavm              # the other; manages multiple builds
+```
+
+Then check your environment:
+
+```bash
+llamactl doctor
+```
+
+## Quick start
+
+```bash
+llamactl add qwen2.5-3b-instruct                # downloads, auto-selects quant
+llamactl serve qwen2.5-3b-instruct --detach     # registers a launchd service
+curl http://localhost:8080/v1/chat/completions  # OpenAI-compatible endpoint
+llamactl status                                 # MEM, UPTIME, TOK/S
+llamactl stop qwen2.5-3b-instruct               # bootout + plist removal
 ```
 
 ## Commands
 
-| Command | Description |
-|---------|-------------|
-| `llamactl hardware` | Detect chip, RAM, OS, iogpu cap, VM state. Writes `~/.config/llamactl/hardware.json`. |
-| `llamactl doctor` | Verify bare-metal Apple Silicon, llama-server resolvable, version floor, iogpu cap. Exits 2 on any failure. |
-| `llamactl search <query> [--refresh]` | List whitelisted models matching a HuggingFace query, with available quants. |
-| `llamactl add <model-id> [--quant Q] [--ctx N]` | Auto-select the best quant for your host, download to `~/.local/share/llama-models/`, verify SHA256, write per-tool metadata. |
-| `llamactl list` | Show installed models, sizes, and on-disk status. |
-| `llamactl remove <model-id> [--purge]` | Drop per-tool metadata. With `--purge`, also delete the shared GGUF (best-effort cross-tool check). |
+| Command   | What it does                                                     |
+|-----------|------------------------------------------------------------------|
+| `hardware`| Detect chip, RAM, GPU memory, OS version; cache to hardware.json |
+| `doctor`  | Run 10 health checks; exits 2 on any failure                     |
+| `search`  | Search HuggingFace for GGUF repos (preferred IDs marked `*`)     |
+| `add`     | Download a preferred short-id or any HF GGUF repo                |
+| `list`    | List installed models with PARAMS, SIZE, ADDED, LAST-SERVED      |
+| `remove`  | Remove metadata (use `--purge` to also delete the GGUF)          |
+| `serve`   | Run llama-server (foreground or `--detach` to launchd)           |
+| `status`  | Show running detached services (table or `--json`)               |
+| `stop`    | Stop a service (or all services if no id)                        |
+
+## Recipes
+
+`serve` flags are assembled from a named recipe. Default is `chat`.
+
+| Recipe         | Context  | KV cache    | Notes                          |
+|----------------|----------|-------------|--------------------------------|
+| `chat`         | 8 K      | f16         | Default                        |
+| `code`         | 16 K     | f16         | Longer context for code work   |
+| `long-context` | 32 K     | q8_0        | Memory-efficient large context |
+| `low-memory`   | 4 K      | q4_0        | Minimal footprint              |
+
+## Storage
+
+| Path                                              | What lives there                          |
+|---------------------------------------------------|-------------------------------------------|
+| `~/.local/share/llama-models/<id>/<quant>.gguf`   | Model weights (shared with llamavm)       |
+| `~/.config/llamactl/models/<id>.json`             | Per-model metadata (llamactl-specific)    |
+| `~/.cache/llamactl/hf-*`                          | HuggingFace API cache                     |
+| `~/Library/LaunchAgents/com.llamactl.<id>.plist`  | Detached-service plists                   |
+| `~/Library/Logs/llamactl/<id>.log`                | Per-model server logs                     |
 
 ## Environment variables
 
@@ -42,8 +79,15 @@ go build ./cmd/llamactl
 | `LLAMACTL_ALLOW_VM` | Permit running in a VM without Metal passthrough (NOT recommended) |
 | `HF_TOKEN` / `LLAMACTL_HF_TOKEN` | Optional HuggingFace bearer token, sent on every API request. Useful if you hit anonymous rate limits. |
 
-## Development
+## Build from source
 
 ```bash
-go test ./...
+git clone https://github.com/gregmundy/llamactl
+cd llamactl
+go build -o llamactl ./cmd/llamactl
+./llamactl --help
 ```
+
+## License
+
+MIT — see [LICENSE](LICENSE).

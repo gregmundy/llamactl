@@ -43,8 +43,11 @@ var Recipes = map[string]Recipe{
 }
 
 // FlagsFor assembles the llama-server argv. Inputs are read-only.
+// `caps.FlashAttnTristate` selects between modern `--flash-attn on` and
+// legacy bare-flag syntax.
 func FlagsFor(r Recipe, m models.Model, _ models.Quant, ggufPath string,
-	hw hardware.Info, ver server.Version, sizeGB float64, port int) []string {
+	hw hardware.Info, ver server.Version, caps server.Capabilities,
+	sizeGB float64, port int) []string {
 
 	ctxSize := r.CtxSize
 	if m.MaxCtx > 0 && m.MaxCtx < ctxSize {
@@ -75,10 +78,11 @@ func FlagsFor(r Recipe, m models.Model, _ models.Quant, ggufPath string,
 	}
 
 	if shouldAddFlashAttn(ver) {
-		// Recent llama-server builds made --flash-attn tristate
-		// (on|off|auto) — bare flag now errors with "expected value".
-		// We always pass `on` since Apple Silicon Metal benefits from it.
-		args = append(args, "--flash-attn", "on")
+		if caps.FlashAttnTristate {
+			args = append(args, "--flash-attn", "on")
+		} else {
+			args = append(args, "--flash-attn")
+		}
 	}
 
 	return args

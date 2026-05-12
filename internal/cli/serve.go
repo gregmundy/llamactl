@@ -8,11 +8,13 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/gregmundy/llamactl/internal/launchd"
 	"github.com/gregmundy/llamactl/internal/models"
 	"github.com/gregmundy/llamactl/internal/recipes"
+	"github.com/gregmundy/llamactl/internal/server"
 	"github.com/spf13/cobra"
 )
 
@@ -61,6 +63,13 @@ func runServe(ctx context.Context, d *Deps, id string, requestedPort int, recipe
 			ErrUserError, resolution.Path, ver.Build, MinLlamaServerBuild)
 	}
 
+	caps, err := d.ServerProber.Capabilities(ctx, resolution.Path)
+	if err != nil {
+		// Capabilities probe failed — log and assume legacy syntax.
+		fmt.Fprintf(d.Stderr, "llamactl: warning: capability probe failed (%v); assuming legacy syntax\n", err)
+		caps = server.Capabilities{}
+	}
+
 	recipe, ok := recipes.Recipes[recipeName]
 	if !ok {
 		valid := make([]string, 0, len(recipes.Recipes))
@@ -83,7 +92,7 @@ func runServe(ctx context.Context, d *Deps, id string, requestedPort int, recipe
 		fmt.Fprintf(d.Stderr, "bound to :%d (:%d was in use)\n", chosen, requestedPort)
 	}
 
-	argv := recipes.FlagsFor(recipe, model, meta.Quant, meta.GGUFPath, hw, ver, sizeGB, chosen)
+	argv := recipes.FlagsFor(recipe, model, meta.Quant, meta.GGUFPath, hw, ver, caps, sizeGB, chosen)
 
 	// Update metadata.LastServedAt before launching. If launch fails the
 	// timestamp is slightly inaccurate; acceptable for v1.
@@ -126,6 +135,10 @@ func runServeForeground(ctx context.Context, d *Deps, id, llamaServer string, ar
 	fmt.Fprintf(d.Stdout, "starting llama-server (recipe=%s, port=%d)…\n", recipeName, port)
 
 	cmd := exec.CommandContext(ctx, llamaServer, argv...)
+	// Override the default Cancel (SIGKILL) with SIGTERM + 5s grace.
+	// llama-server flushes Metal state on SIGTERM in well under that.
+	cmd.Cancel = func() error { return cmd.Process.Signal(syscall.SIGTERM) }
+	cmd.WaitDelay = 5 * time.Second
 	cmd.Stdout = io.MultiWriter(logFile, d.Stdout)
 	cmd.Stderr = io.MultiWriter(logFile, d.Stderr)
 	return cmd.Run()

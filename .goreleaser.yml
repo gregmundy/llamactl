@@ -1,0 +1,67 @@
+version: 2
+project_name: llamactl
+
+before:
+  hooks:
+    - go mod tidy
+
+builds:
+  - id: llamactl
+    main: ./cmd/llamactl
+    binary: llamactl
+    env:
+      - CGO_ENABLED=0
+    goos: [darwin]
+    goarch: [arm64]
+    ldflags:
+      - -s -w -X main.llamactlVersion={{.Version}}
+
+archives:
+  - id: default
+    ids:
+      - llamactl
+    name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    format: tar.gz
+    files:
+      - LICENSE*
+      - README.md
+
+checksum:
+  name_template: "checksums.txt"
+
+snapshot:
+  version_template: "{{ incpatch .Version }}-next"
+
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - "^docs:"
+      - "^chore:"
+      - "^test:"
+
+homebrew_casks:
+  - name: llamactl
+    binaries:
+      - llamactl
+    repository:
+      owner: gregmundy
+      name: homebrew-tap
+      token: "{{ .Env.HOMEBREW_TAP_GITHUB_TOKEN }}"
+    homepage: "https://github.com/gregmundy/llamactl"
+    description: "Run llama.cpp on Apple Silicon"
+    license: "MIT"
+    hooks:
+      post:
+        install: |
+          if OS.mac?
+            system_command "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", staged_path]
+          end
+    caveats: |
+      Verify your environment after install:
+
+        llamactl doctor
+
+      Add your first model:
+
+        llamactl add qwen2.5-3b-instruct

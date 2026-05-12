@@ -27,9 +27,10 @@ type ServerResolver interface {
 	Resolve(ctx context.Context) (server.Resolution, error)
 }
 
-// ServerProber runs `llama-server --version` and caches the result.
+// ServerProber runs `llama-server --version` / `--help` and caches results.
 type ServerProber interface {
 	Probe(ctx context.Context, path string) (server.Version, error)
+	Capabilities(ctx context.Context, path string) (server.Capabilities, error)
 }
 
 // HFClient is the HuggingFace API + bytes seam.

@@ -43,7 +43,7 @@ func runList(ctx context.Context, d *Deps) error {
 		default:
 			size = "(stat err)"
 		}
-		params := ""
+		params := "?"
 		if m.ParamsB > 0 {
 			params = fmt.Sprintf("%dB", m.ParamsB)
 		}
