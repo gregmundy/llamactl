@@ -150,9 +150,11 @@ func TestFitSkipsTinyAuxiliaryFiles(t *testing.T) {
 	hits := []hf.SearchHit{{ID: "user/some-model-GGUF"}}
 	repos := map[string]hf.Repo{
 		"user/some-model-GGUF": {Siblings: []hf.File{
-			// Imatrix shard — tiny, has a quant tag, should be filtered.
+			// Imatrix calibration shard (~100 MiB) — has a quant tag but must be filtered.
 			{RFilename: "imatrix-Q4_K_M.gguf", LFS: &hf.LFSInfo{Size: 100 << 20, SHA256: "a"}},
-			// Real model — should appear.
+			// Sub-1B Q4_K_M (e.g. qwen3-0.6b, ~600 MB) — must pass the 200 MiB floor.
+			{RFilename: "qwen3-0.6b-Q4_K_M.gguf", LFS: &hf.LFSInfo{Size: 600 << 20, SHA256: "c"}},
+			// Real larger model — should also appear.
 			{RFilename: "model-Q5_K_M.gguf", LFS: &hf.LFSInfo{Size: 4 << 30, SHA256: "b"}},
 		}},
 	}
@@ -167,6 +169,9 @@ func TestFitSkipsTinyAuxiliaryFiles(t *testing.T) {
 	s := out.String()
 	if strings.Contains(s, "imatrix") {
 		t.Fatalf("imatrix shard should have been filtered:\n%s", s)
+	}
+	if !strings.Contains(s, "Q4_K_M") {
+		t.Fatalf("sub-1B Q4_K_M row missing (600 MiB should clear 200 MiB floor):\n%s", s)
 	}
 	if !strings.Contains(s, "Q5_K_M") {
 		t.Fatalf("real model row missing:\n%s", s)

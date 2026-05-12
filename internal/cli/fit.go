@@ -21,8 +21,9 @@ const (
 
 // fitMinModelBytes filters out imatrix calibration shards and other small
 // auxiliary GGUFs that match the quant regex but aren't actual model weights.
-// Smallest real-world model GGUF in QuantSizeTable is ~1.3 GB (3B @ Q2_K).
-const fitMinModelBytes = 500 << 20 // 500 MiB
+// 200 MiB is safely above imatrix shards (~100 MB) while still admitting
+// legitimate sub-1B Q4_K_M files (e.g. qwen3-0.6b at ~600 MB).
+const fitMinModelBytes = 200 << 20 // 200 MiB
 
 var fitQuantRe = regexp.MustCompile(`(IQ\d+_[A-Z0-9_]+|Q\d+_[A-Z0-9_]+|Q\d+_0)`)
 
