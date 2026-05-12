@@ -44,11 +44,15 @@ func newFitCmd(d *Deps) *cobra.Command {
 	var ctxSize int
 	var limit int
 	var asJSON bool
+	var speculative bool
 	cmd := &cobra.Command{
 		Use:   "fit <query...>",
 		Short: "Search HF and rank GGUF variants by fit on this host",
 		Args:  cobra.MinimumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if speculative {
+				return runFitSpeculative(cmd.Context(), d, strings.Join(args, " "), limit)
+			}
 			return runFit(cmd.Context(), d, strings.Join(args, " "), install, ctxSize, limit, asJSON)
 		},
 	}
@@ -56,6 +60,7 @@ func newFitCmd(d *Deps) *cobra.Command {
 	cmd.Flags().IntVar(&ctxSize, "ctx", fitDefaultCtx, "context size for KV-cache estimation")
 	cmd.Flags().IntVar(&limit, "limit", 10, "cap rows shown")
 	cmd.Flags().BoolVar(&asJSON, "json", false, "emit JSON instead of a table")
+	cmd.Flags().BoolVar(&speculative, "speculative", false, "list installed draft candidates for the named main model")
 	return cmd
 }
 
@@ -208,4 +213,12 @@ func renderFitTable(w io.Writer, rows []fitRow) error {
 		fmt.Fprintf(tw, "%s\t%s\t%s\t%.1f GB\t%s\t%s\n", sym, r.Repo, r.Quant, r.SizeGB, r.Verdict, r.Note)
 	}
 	return tw.Flush()
+}
+
+// runFitSpeculative is the --speculative branch of `llamactl fit`. The
+// positional arg is the MAIN model id; candidates come from ModelStore.List.
+// Implementation lands in Task 14; this stub exists so Task 13's flag wiring
+// compiles in isolation.
+func runFitSpeculative(ctx context.Context, d *Deps, mainID string, limit int) error {
+	return fmt.Errorf("fit --speculative: not yet implemented")
 }
