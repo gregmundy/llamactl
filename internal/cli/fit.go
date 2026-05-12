@@ -215,10 +215,88 @@ func renderFitTable(w io.Writer, rows []fitRow) error {
 	return tw.Flush()
 }
 
+// specRow is a fit row in speculative mode. The column meanings differ from
+// the main `fitRow` shape but the verdict semantics come from
+// models.SpeculativePair.
+type specRow struct {
+	DraftID       string  `json:"draft_id"`
+	Arch          string  `json:"arch"`
+	ParamsB       float64 `json:"params_b"`
+	SizeRatio     float64 `json:"size_ratio"`
+	CombinedRAMGB float64 `json:"combined_ram_gb"`
+	Verdict       string  `json:"verdict"` // "ok", "ratio-low", "ratio-high", "refused"
+	Reason        string  `json:"reason,omitempty"`
+}
+
 // runFitSpeculative is the --speculative branch of `llamactl fit`. The
 // positional arg is the MAIN model id; candidates come from ModelStore.List.
-// Implementation lands in Task 14; this stub exists so Task 13's flag wiring
-// compiles in isolation.
 func runFitSpeculative(ctx context.Context, d *Deps, mainID string, limit int) error {
-	return fmt.Errorf("fit --speculative: not yet implemented")
+	mainMeta, err := d.ModelStore.Get(ctx, mainID)
+	if err != nil {
+		return fmt.Errorf("%w: main model %q is not installed; run `llamactl add %s` first",
+			ErrUserError, mainID, mainID)
+	}
+	hw, err := ensureHardware(ctx, d)
+	if err != nil {
+		return err
+	}
+
+	mainModel := models.Model{
+		ID: mainMeta.ID, HFRepo: mainMeta.Repo, Arch: mainMeta.Arch,
+		ParamsB: mainMeta.ParamsB, MaxCtx: lookupMaxCtx(mainMeta),
+	}
+
+	all, err := d.ModelStore.List(ctx)
+	if err != nil {
+		return fmt.Errorf("list installed models: %w", err)
+	}
+
+	var rows []specRow
+	for _, candidate := range all {
+		if candidate.ID == mainMeta.ID {
+			continue // can't draft yourself
+		}
+		draftModel := models.Model{
+			ID: candidate.ID, HFRepo: candidate.Repo, Arch: candidate.Arch,
+			ParamsB: candidate.ParamsB, MaxCtx: lookupMaxCtx(candidate),
+		}
+		verdict := models.SpeculativePair(mainModel, draftModel, hw, "chat")
+		if !verdict.ArchMatch {
+			continue // omit arch-mismatches entirely (noise, not a candidate)
+		}
+		v := "ok"
+		if !verdict.Ok {
+			v = "refused"
+		} else if verdict.SizeRatio < 5.0 {
+			v = "ratio-low"
+		} else if verdict.SizeRatio > 15.0 {
+			v = "ratio-high"
+		}
+		rows = append(rows, specRow{
+			DraftID:       candidate.ID,
+			Arch:          string(candidate.Arch),
+			ParamsB:       candidate.ParamsB,
+			SizeRatio:     verdict.SizeRatio,
+			CombinedRAMGB: verdict.CombinedRAMGB,
+			Verdict:       v,
+			Reason:        verdict.Reason,
+		})
+	}
+
+	if len(rows) == 0 {
+		fmt.Fprintf(d.Stdout,
+			"no installed draft candidates for %s; run `llamactl fit %s` to find smaller variants of the same family\n",
+			mainID, mainModel.Arch)
+		return nil
+	}
+
+	// Placeholder rendering — Task 15 replaces this with sorted tabwriter + footer.
+	if limit > 0 && len(rows) > limit {
+		rows = rows[:limit]
+	}
+	for _, r := range rows {
+		fmt.Fprintf(d.Stdout, "%-40s %-8s %.1f B  ratio=%.1fx  RAM=%.1fGB  verdict=%s  %s\n",
+			r.DraftID, r.Arch, r.ParamsB, r.SizeRatio, r.CombinedRAMGB, r.Verdict, r.Reason)
+	}
+	return nil
 }
