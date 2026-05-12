@@ -53,10 +53,17 @@ func (f fakeResolverPhase3) Resolve(_ context.Context) (server.Resolution, error
 	return server.Resolution{Path: f.Path}, nil
 }
 
-type fakeProberPhase3 struct{ Version server.Version }
+type fakeProberPhase3 struct {
+	Version server.Version
+	Caps    server.Capabilities
+}
 
 func (f fakeProberPhase3) Probe(_ context.Context, _ string) (server.Version, error) {
 	return f.Version, nil
+}
+
+func (f fakeProberPhase3) Capabilities(_ context.Context, _ string) (server.Capabilities, error) {
+	return f.Caps, nil
 }
 
 func TestServeUnknownModel(t *testing.T) {
