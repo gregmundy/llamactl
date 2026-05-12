@@ -1,6 +1,6 @@
 # llamactl Phase 6b: Performance + parser hardening — Forward-looking Design Sketch
 
-**Status:** Draft 2026-05-12 (forward-looking; not approved for implementation)
+**Status:** Superseded 2026-05-12 by [`2026-05-12-phase6b-speculative-and-parser-design.md`](2026-05-12-phase6b-speculative-and-parser-design.md). Hot swap split out to Phase 6c; v1.4.0 ships speculative decoding + GGUF tensor-shape fallback.
 **Ships as:** `v1.4.0` (provisional)
 **Branch:** `phase6b-performance-parser` (provisional)
 **Covers:** hot model swap, speculative decoding auto-config, GGUF tensor-shape inference for parameter-count fallback.
