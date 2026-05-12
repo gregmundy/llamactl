@@ -85,6 +85,18 @@ func TestUptimeHHMMSS(t *testing.T) {
 	}
 }
 
+func TestParseEtimeMalformed(t *testing.T) {
+	cases := []string{"abc:def", "12:34:wat", "1-bad:00:00", ""}
+	for _, s := range cases {
+		t.Run(s, func(t *testing.T) {
+			_, err := parseEtime(s)
+			if err == nil {
+				t.Fatalf("parseEtime(%q): expected error, got nil", s)
+			}
+		})
+	}
+}
+
 func TestUptimeDaysHHMMSS(t *testing.T) {
 	r := &fakeRunner{outputs: map[string]string{"ps -o etime= -p 100": "2-01:05:23\n"}}
 	i := &Inspector{Runner: r}
