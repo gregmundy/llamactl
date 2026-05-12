@@ -90,6 +90,12 @@ func main() {
 		if errors.Is(err, cli.ErrUserError) {
 			os.Exit(2)
 		}
+		// Foreground `serve` propagates llama-server's own exit code (PRD §9)
+		// so scripts can react to crashes.
+		var exitErr *exec.ExitError
+		if errors.As(err, &exitErr) {
+			os.Exit(exitErr.ExitCode())
+		}
 		fmt.Fprintln(os.Stderr, "llamactl:", err)
 		os.Exit(1)
 	}
