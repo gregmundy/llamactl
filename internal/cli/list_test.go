@@ -97,8 +97,8 @@ func TestListShowsParamsBForPhase25Entries(t *testing.T) {
 	if err != nil {
 		t.Fatalf("err: %v", err)
 	}
-	if !strings.Contains(out, "8B") {
-		t.Errorf("output should show 8B; got:\n%s", out)
+	if !strings.Contains(out, "8 B") {
+		t.Errorf("output should show '8 B'; got:\n%s", out)
 	}
 }
 
@@ -124,6 +124,31 @@ func TestListShowsLastServedAt(t *testing.T) {
 	}
 	if !strings.Contains(out, "2026-05-11") {
 		t.Errorf("output missing last-served date:\n%s", out)
+	}
+}
+
+func TestListRendersSub1BParamsB(t *testing.T) {
+	dir := t.TempDir()
+	existing := filepath.Join(dir, "small.gguf")
+	if err := os.WriteFile(existing, []byte("xxx"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	store := newFakeModelStore()
+	_ = store.Put(context.Background(), models.Metadata{
+		ID:        "qwen3-0.6b-instruct",
+		Quant:     models.Q4_K_M,
+		GGUFPath:  existing,
+		SizeBytes: 3,
+		AddedAt:   time.Date(2026, 5, 12, 0, 0, 0, 0, time.UTC),
+		ParamsB:   0.6,
+	})
+	d := &Deps{ModelStore: store, FS: OSFileSystem{}}
+	out, _, err := runRoot(t, d, "list")
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	if !strings.Contains(out, "0.6 B") {
+		t.Errorf("PARAMS column should show '0.6 B'; got:\n%s", out)
 	}
 }
 

@@ -244,8 +244,8 @@ func TestIntegrationPhase25AddHFPath(t *testing.T) {
 	if !strings.Contains(listOut, "qwen3-8b-instruct") {
 		t.Errorf("list missing derived id:\n%s", listOut)
 	}
-	if !strings.Contains(listOut, "8B") {
-		t.Errorf("list missing 8B param from GGUF header:\n%s", listOut)
+	if !strings.Contains(listOut, "8 B") {
+		t.Errorf("list missing '8 B' param from GGUF header:\n%s", listOut)
 	}
 
 	// Verify on-disk metadata captured ParamsB and Arch.

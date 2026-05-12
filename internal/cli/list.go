@@ -45,7 +45,7 @@ func runList(ctx context.Context, d *Deps) error {
 		}
 		params := "?"
 		if m.ParamsB > 0 {
-			params = fmt.Sprintf("%gB", m.ParamsB)
+			params = fmt.Sprintf("%g B", m.ParamsB)
 		}
 		lastServed := ""
 		if !m.LastServedAt.IsZero() {
