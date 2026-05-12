@@ -385,6 +385,49 @@ func TestDoctor_StalePlists_OK(t *testing.T) {
 	}
 }
 
+func TestDoctor_LogFiles_NotConfigured_OK(t *testing.T) {
+	d := healthyDoctorDeps(t)
+	// healthyDoctorDeps leaves LogsDir empty.
+	out, _, _ := runRoot(t, d, "doctor")
+	if strings.Contains(out, "✗ Log files within size limit") {
+		t.Errorf("should pass when LogsDir is unset:\n%s", out)
+	}
+	if !strings.Contains(out, "Log files within size limit") {
+		t.Errorf("expected new log-size check in transcript:\n%s", out)
+	}
+}
+
+func TestDoctor_LogFiles_OK(t *testing.T) {
+	tmp := t.TempDir()
+	// Small log file under the limit.
+	if err := os.WriteFile(filepath.Join(tmp, "tiny.log"), []byte("hi"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	d := healthyDoctorDeps(t)
+	d.LogsDir = tmp
+	out, _, _ := runRoot(t, d, "doctor")
+	if strings.Contains(out, "✗ Log files within size limit") {
+		t.Errorf("should pass for under-limit log:\n%s", out)
+	}
+}
+
+func TestDoctor_LogFiles_Oversized_Failure(t *testing.T) {
+	tmp := t.TempDir()
+	big := filepath.Join(tmp, "huge.log")
+	if err := os.WriteFile(big, []byte(strings.Repeat("x", (10<<20)+1)), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	d := healthyDoctorDeps(t)
+	d.LogsDir = tmp
+	out, _, _ := runRoot(t, d, "doctor")
+	if !strings.Contains(out, "✗ Log files within size limit") {
+		t.Errorf("expected log-size check to fail:\n%s", out)
+	}
+	if !strings.Contains(out, "huge.log") {
+		t.Errorf("expected oversized filename in detail:\n%s", out)
+	}
+}
+
 func TestDoctor_StalePlists_Failure(t *testing.T) {
 	tmp := t.TempDir()
 	plistPath := filepath.Join(tmp, "com.llamactl.x.plist")

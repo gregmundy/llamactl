@@ -100,8 +100,45 @@ func buildDoctorChecks(ctx context.Context, deps *Deps) ([]doctorCheck, string) 
 		diskSpaceCheck(deps),
 		tailscaleCheck(deps),
 		stalePlistsCheck(deps),
+		logFilesNotOversizedCheck(deps),
 	}
 	return checks, ""
+}
+
+// logFilesNotOversizedCheck flags any *.log under LogsDir that exceeds
+// 10 MiB. Rotation happens at serve-time, so this fires only when a
+// llama-server process has been running long enough to refill the file
+// past the threshold, or rotation has failed silently.
+func logFilesNotOversizedCheck(deps *Deps) doctorCheck {
+	return doctorCheck{
+		label:       "Log files within size limit (10 MiB)",
+		remediation: "rotate or remove oversized log: ls -lh " + deps.LogsDir,
+		run: func(_ context.Context, _ *Deps) (bool, string) {
+			if deps.LogsDir == "" {
+				return true, "(not configured)"
+			}
+			entries, err := os.ReadDir(deps.LogsDir)
+			if err != nil {
+				if os.IsNotExist(err) {
+					return true, "no logs directory yet"
+				}
+				return false, err.Error()
+			}
+			for _, e := range entries {
+				if e.IsDir() {
+					continue
+				}
+				info, err := e.Info()
+				if err != nil {
+					continue
+				}
+				if info.Size() > 10<<20 {
+					return false, fmt.Sprintf("%s exceeds 10 MiB", e.Name())
+				}
+			}
+			return true, ""
+		},
+	}
 }
 
 func bareMetalCheck(info hardware.Info, override bool) doctorCheck {

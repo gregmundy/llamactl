@@ -129,6 +129,10 @@ func runServeForeground(ctx context.Context, d *Deps, id, llamaServer string, ar
 		return fmt.Errorf("mkdir logs: %w", err)
 	}
 	logPath := filepath.Join(d.LogsDir, id+".log")
+	if _, err := RotateIfLarge(logPath, 10<<20, 3); err != nil {
+		fmt.Fprintf(d.Stderr, "llamactl: warning: log rotation failed: %v\n", err)
+		// Continue: serving > rotation hygiene.
+	}
 	logFile, err := os.OpenFile(logPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
 	if err != nil {
 		return fmt.Errorf("open log %s: %w", logPath, err)
@@ -156,6 +160,10 @@ func runServeDetached(ctx context.Context, d *Deps, id, llamaServer string, argv
 		return fmt.Errorf("mkdir Logs: %w", err)
 	}
 	logPath := filepath.Join(d.LogsDir, id+".log")
+	if _, err := RotateIfLarge(logPath, 10<<20, 3); err != nil {
+		fmt.Fprintf(d.Stderr, "llamactl: warning: log rotation failed: %v\n", err)
+		// Continue: serving > rotation hygiene.
+	}
 	plistPath := filepath.Join(d.LaunchAgentsDir, label+".plist")
 
 	home, err := os.UserHomeDir()
