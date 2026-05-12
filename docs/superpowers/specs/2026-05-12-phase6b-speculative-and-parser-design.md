@@ -52,9 +52,13 @@ internal/cli/fit.go            + --speculative flag (changes positional arg
                                + per-candidate SpeculativePair invocation
                                + adapted tabwriter columns
 
-internal/launchd/plist.go      + DraftPath, DraftCtxSize fields on PlistSpec
-                               + template renders --model-draft / --ctx-size-draft
-                                 when DraftPath != ""
+internal/launchd/ports.go      + HasDraft(dir, label) (string, bool)
+                                 — one-line plist scanner; mirrors HasAPIKey.
+                                 Used in tests; foundation for a future
+                                 doctor check.
+(No PlistSpec / plist template changes — PlistSpec.Args is a flat []string
+ and serve.go's existing post-recipe append pattern from v1.3.0's --api-key
+ wiring carries --model-draft / --ctx-size-draft through unchanged.)
 ```
 
 **No interface changes.** `Deps` gains zero fields. All work fits existing seams (`Deps.ModelStore`, `Deps.HFClient`, hardware info from `ensureHardware`, `runner.CommandRunner` for any new shell-outs — there are none in 6b). The `cli.PortAllocator` interface from v1.2.1 is unchanged. Same GoReleaser → cask → `brew upgrade` distribution path.
@@ -179,29 +183,9 @@ Pure function. No I/O. Lives in `internal/models` next to `selector.go` and `qua
 
 ### 3.5 Plist embedding
 
-`internal/launchd/plist.go` gains two fields on `PlistSpec`:
+**No PlistSpec or template changes required.** `PlistSpec.Args` is already a flat `[]string` rendered by `{{range .Args}}` in the existing plist template. Serve.go appends `--model-draft <path>` and `--ctx-size-draft <N>` to its local `argv` slice *after* `recipes.FlagsFor` returns — exactly the same pattern v1.3.0 uses for `--api-key` (`serve.go:131`). The detached path then passes that argv into the plist render through the existing `PlistSpec.Args` field. The launchd template carries the draft flags through unchanged.
 
-```go
-type PlistSpec struct {
-    // ... existing fields ...
-    DraftPath    string // empty when no draft; renders as --model-draft <path>
-    DraftCtxSize int    // empty (zero) when no draft; renders as --ctx-size-draft <N>
-}
-```
-
-The template adds:
-```xml
-{{- if .DraftPath}}
-<string>--model-draft</string>
-<string>{{xml .DraftPath}}</string>
-<string>--ctx-size-draft</string>
-<string>{{.DraftCtxSize}}</string>
-{{- end}}
-```
-
-`serve.go`'s detached path populates these fields from `opts.DraftID` resolution before calling `launchd.Render`.
-
-A new helper `launchd.HasDraft(agentsDir, label string) (string, bool)` returns the draft path embedded in a plist, mirroring `HasAPIKey` from v1.3.0. Used in tests; no production caller in 6b (could feed a future doctor check on draft availability — out of scope here).
+A new helper `launchd.HasDraft(agentsDir, label string) (string, bool)` mirrors `HasAPIKey` from v1.3.0 — a one-line string scan for `<string>--model-draft</string>` followed by extracting the next `<string>...</string>` value. Used in tests; foundation for a future doctor check on draft availability (not specced in 6b).
 
 ### 3.6 Tests
 
@@ -228,11 +212,10 @@ A new helper `launchd.HasDraft(agentsDir, label string) (string, bool)` returns 
 - `TestFitSpeculativeEmptyCandidates` — only the main is installed → output is the "no installed draft candidates" message; exit 0.
 - `TestFitSpeculativeRatioOrder` — candidates with ratios 8×, 12×, 4× → output orders 8× first (closest to ideal 5-10× midpoint), then 4×, then 12×.
 
-`internal/launchd/plist_test.go`:
-- `TestRenderPlistWithDraft` — PlistSpec with DraftPath + DraftCtxSize → rendered XML contains `--model-draft` + `--ctx-size-draft`.
-- `TestRenderPlistNoDraft` — empty DraftPath → XML has neither.
-- `TestHasDraftFindsEmbeddedPath` — fixture plist with draft → `HasDraft` returns the path + true.
-- `TestHasDraftAbsent` — fixture plist without draft → returns ("", false).
+`internal/launchd/ports_test.go`:
+- `TestHasDraftFindsEmbeddedPath` — fixture plist containing `<string>--model-draft</string><string>/path/draft.gguf</string>` → `HasDraft` returns `("/path/draft.gguf", true)`.
+- `TestHasDraftAbsent` — fixture plist without the flag → returns `("", false)`.
+- `TestHasDraftMissingPlist` — non-existent label → returns `("", false)` (mirrors HasAPIKey's missing-file behavior).
 
 ---
 
@@ -345,29 +328,27 @@ Any error during the tensor-info walk (truncated read, unexpected dim count, nam
 
 Tasks land in this order on `phase6b-speculative-and-parser`:
 
-1. `internal/gguftest` extension: `WithTensor` option + tensor descriptor writer — XS
-2. `internal/gguf`: `ReadHeaderWithTensors` skeleton (no formula yet) with truncation/limit safety — S
+1. `internal/gguftest`: `WithTensor` option + tensor descriptor writer — XS
+2. `internal/gguf`: `ReadHeaderWithTensors` skeleton with truncation/limit safety — S
 3. `internal/gguf`: per-arch formula table + `llamaParams` formula + tests for arch=llama — S
 4. `internal/gguf`: `qwen2Params` / `qwen3Params` / `gemma3Params` formulas + fixture tests — M
 5. `internal/gguf`: register `mistral` → `llamaParams` alias + test — XS
 6. `cmd/gguf-inspect`: switch to `ReadHeaderWithTensors`, add fallback annotation — XS
 7. `internal/cli/list.go`: self-heal path switches to `ReadHeaderWithTensors` + test — S
 8. `internal/models/speculative.go`: `SpeculativePair` + `PairVerdict` + all pair tests — M
-9. `internal/launchd/plist.go`: `DraftPath` + `DraftCtxSize` fields + template branch + render tests — S
-10. `internal/launchd/plist.go`: `HasDraft` helper + test — XS
-11. `internal/cli/serve.go`: `--draft` flag, opts wiring, ModelStore.Get(draft), SpeculativePair invocation — M
-12. `internal/cli/serve.go`: post-recipe append of `--model-draft` + `--ctx-size-draft`, log line — S
-13. `internal/cli/serve.go`: detached path populates PlistSpec draft fields — S
-14. `internal/cli/serve_test.go`: all six new tests — M
-15. `internal/cli/fit.go`: `--speculative` flag + positional-arg branch — S
-16. `internal/cli/fit.go`: candidate enumeration from ModelStore.List + SpeculativePair loop — S
-17. `internal/cli/fit.go`: sort + tabwriter columns + footer caveat — S
-18. `internal/cli/fit_test.go`: all four new tests — S
-19. README + PRD doc updates (new `--draft` flag on serve; `fit --speculative` mode; parser fallback) — S
-20. Merge → tag `v1.4.0` → release pipeline + brew upgrade verify + live smoke — M
-21. Update `project_state.md` memory — XS
+9. `internal/launchd/ports.go`: `HasDraft` helper + ports_test cases — XS
+10. `internal/cli/serve.go`: `--draft` flag, opts wiring, draft ModelStore.Get, SpeculativePair validation — M
+11. `internal/cli/serve.go`: post-recipe append of `--model-draft` + `--ctx-size-draft`, log line — S
+12. `internal/cli/serve_test.go`: all six new tests (foreground + detached coverage) — M
+13. `internal/cli/fit.go`: `--speculative` flag + positional-arg branch — S
+14. `internal/cli/fit.go`: candidate enumeration from ModelStore.List + SpeculativePair loop — S
+15. `internal/cli/fit.go`: sort + tabwriter columns + footer caveat — S
+16. `internal/cli/fit_test.go`: all four new tests — S
+17. README + PRD doc updates (new `--draft` flag on serve; `fit --speculative` mode; parser fallback) — S
+18. Final cross-cutting review + live smoke + merge → tag `v1.4.0` → release pipeline + brew upgrade verify — M
+19. Update `project_state.md` memory + `MEMORY.md` index — XS
 
-Each task = one commit on the feature branch.
+Each implementation task = one commit on the feature branch. Tasks 18-19 are orchestrator-driven (live smoke spans the whole branch; memory lives outside the repo).
 
 ---
 
@@ -375,7 +356,7 @@ Each task = one commit on the feature branch.
 
 Phase 6b ships when:
 
-- ✅ All 21 implementation tasks complete; each one commit on `phase6b-speculative-and-parser`.
+- ✅ All 17 implementation tasks (1-17) complete; each one commit on `phase6b-speculative-and-parser`. Tasks 18-19 are orchestrator-driven (release + memory).
 - ✅ `go test ./... -race` clean; `go vet ./...` clean; `gofmt -l .` clean.
 - ✅ Live: `llamactl add qwen2.5-7b-instruct && llamactl add qwen2.5-0.5b-instruct`, then `llamactl serve qwen2.5-7b-instruct --draft qwen2.5-0.5b-instruct` → foreground log contains `"speculative decoding enabled (draft=qwen2.5-0.5b-instruct, ratio=14.0×)"` and llama-server starts with `--model-draft` in argv.
 - ✅ Live: `curl -d '{"model":"qwen2.5-7b-instruct","messages":[...]}' http://localhost:8080/v1/chat/completions` returns generated tokens; tok/s recorded in log.
