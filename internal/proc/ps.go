@@ -16,9 +16,10 @@ import (
 var ErrProcessNotFound = errors.New("process not found")
 
 // CommandRunner is the subprocess seam, locally redeclared (same
-// pattern as internal/hardware/internal/server).
+// pattern as internal/hardware/internal/server). dir is the working
+// directory ("" = inherit cwd). Mirrors runner.CommandRunner.
 type CommandRunner interface {
-	Run(ctx context.Context, name string, args []string, stdin string, stdout, stderr io.Writer) error
+	Run(ctx context.Context, name string, args []string, dir string, stdout, stderr io.Writer) error
 }
 
 // Inspector queries the kernel about a running pid via `ps`.

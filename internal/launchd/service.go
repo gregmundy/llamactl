@@ -11,9 +11,10 @@ import (
 
 // CommandRunner is the subprocess seam, locally redeclared so this
 // package doesn't import internal/runner (same Go structural-typing
-// pattern used in internal/hardware and internal/server).
+// pattern used in internal/hardware and internal/server). dir is the
+// working directory ("" = inherit cwd). Mirrors runner.CommandRunner.
 type CommandRunner interface {
-	Run(ctx context.Context, name string, args []string, stdin string, stdout, stderr io.Writer) error
+	Run(ctx context.Context, name string, args []string, dir string, stdout, stderr io.Writer) error
 }
 
 // Service issues launchctl subcommands in the gui/<UID> domain.
