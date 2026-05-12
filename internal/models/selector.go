@@ -3,6 +3,7 @@ package models
 import (
 	"errors"
 	"fmt"
+	"math"
 
 	"github.com/gregmundy/llamactl/internal/hardware"
 )
@@ -23,9 +24,9 @@ func GpuAddressableGB(hw hardware.Info) float64 {
 
 // SelectQuant implements PRD §6.1. Pure function: no I/O.
 func SelectQuant(model Model, info hardware.Info, targetCtx int) (Quant, error) {
-	sizeRow, ok := QuantSizeTable[model.ParamsB]
+	sizeRow, ok := QuantSizeTable[int(math.Round(model.ParamsB))]
 	if !ok {
-		return "", fmt.Errorf("no QuantSizeTable row for ParamsB=%d (model %q)", model.ParamsB, model.ID)
+		return "", fmt.Errorf("no QuantSizeTable row for ParamsB=%g (model %q)", model.ParamsB, model.ID)
 	}
 	kvRow, ok := KVCachePerTokenKB[model.Arch]
 	if !ok {

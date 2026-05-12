@@ -67,7 +67,7 @@ func runSearch(ctx context.Context, d *Deps, query string, refresh bool) error {
 			r = row{
 				preferred: true,
 				id:        m.ID,
-				params:    fmt.Sprintf("%dB", m.ParamsB),
+				params:    fmt.Sprintf("%gB", m.ParamsB),
 				repo:      m.HFRepo,
 			}
 		} else {
