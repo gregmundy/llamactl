@@ -7,6 +7,7 @@ import (
 	"os"
 	"time"
 
+	"github.com/gregmundy/llamactl/internal/config"
 	"github.com/gregmundy/llamactl/internal/download"
 	"github.com/gregmundy/llamactl/internal/hardware"
 	"github.com/gregmundy/llamactl/internal/hf"
@@ -133,6 +134,9 @@ type Deps struct {
 
 	LaunchAgentsDir string // ~/Library/LaunchAgents
 	LogsDir         string // ~/Library/Logs/llamactl
+
+	Config     *config.Config
+	ConfigPath string
 
 	LookPath    func(name string) (string, error)
 	Getenv      func(key string) string
