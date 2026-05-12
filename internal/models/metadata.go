@@ -17,4 +17,8 @@ type Metadata struct {
 	// (legacy entries lack these — selector will not run on them).
 	ParamsB int  `json:"params_b,omitempty"`
 	Arch    Arch `json:"arch,omitempty"`
+
+	// Phase 3 addition. Updated by `serve` (foreground or detached)
+	// immediately before launching llama-server.
+	LastServedAt time.Time `json:"last_served_at,omitempty"`
 }

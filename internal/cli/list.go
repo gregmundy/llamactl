@@ -31,7 +31,7 @@ func runList(ctx context.Context, d *Deps) error {
 		return nil
 	}
 	tw := tabwriter.NewWriter(d.Stdout, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(tw, "MODEL-ID\tQUANT\tPARAMS\tSIZE\tPATH\tADDED")
+	fmt.Fprintln(tw, "MODEL-ID\tQUANT\tPARAMS\tSIZE\tPATH\tADDED\tLAST-SERVED")
 	for _, m := range entries {
 		size := humanFileSize(m.SizeBytes)
 		fi, statErr := d.FS.Stat(m.GGUFPath)
@@ -47,8 +47,12 @@ func runList(ctx context.Context, d *Deps) error {
 		if m.ParamsB > 0 {
 			params = fmt.Sprintf("%dB", m.ParamsB)
 		}
-		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\n",
-			m.ID, m.Quant, params, size, m.GGUFPath, m.AddedAt.Format("2006-01-02"))
+		lastServed := ""
+		if !m.LastServedAt.IsZero() {
+			lastServed = m.LastServedAt.Format("2006-01-02")
+		}
+		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
+			m.ID, m.Quant, params, size, m.GGUFPath, m.AddedAt.Format("2006-01-02"), lastServed)
 	}
 	return tw.Flush()
 }

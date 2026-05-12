@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -21,7 +22,9 @@ import (
 	"github.com/gregmundy/llamactl/internal/download"
 	"github.com/gregmundy/llamactl/internal/hardware"
 	"github.com/gregmundy/llamactl/internal/hf"
+	"github.com/gregmundy/llamactl/internal/launchd"
 	"github.com/gregmundy/llamactl/internal/models"
+	"github.com/gregmundy/llamactl/internal/proc"
 	"github.com/gregmundy/llamactl/internal/server"
 )
 
@@ -300,5 +303,91 @@ func TestIntegrationPhase25AddHFPath(t *testing.T) {
 	gguf := filepath.Join(sharedDir, "qwen3-8b-instruct", "Q4_K_M.gguf")
 	if _, err := os.Stat(gguf); !errors.Is(err, os.ErrNotExist) {
 		t.Errorf("GGUF should be gone after --purge; err=%v", err)
+	}
+}
+
+func buildFakeLlamaServer(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	out := filepath.Join(dir, "llama-server")
+	cmd := exec.Command("go", "build", "-o", out, "./testdata/fakellamaserver")
+	cmd.Stderr = os.Stderr
+	if err := cmd.Run(); err != nil {
+		t.Fatalf("build fake llama-server: %v", err)
+	}
+	return out
+}
+
+func TestIntegrationPhase3DetachedRoundtrip(t *testing.T) {
+	tmp := t.TempDir()
+	store := models.NewFileStore(filepath.Join(tmp, "models"))
+	_ = store.Put(context.Background(), models.Metadata{
+		ID:        "qwen2.5-3b-instruct",
+		Quant:     models.Q4_K_M,
+		Repo:      "Qwen/Qwen2.5-3B-Instruct-GGUF",
+		GGUFPath:  filepath.Join(tmp, "model.gguf"),
+		SizeBytes: 1_900_000_000,
+		ParamsB:   3,
+		Arch:      models.ArchQwen25,
+		AddedAt:   fakeNow(),
+	})
+	_ = os.WriteFile(filepath.Join(tmp, "model.gguf"), []byte("xxx"), 0o644)
+
+	// Fake llama-server is built but we don't need to run it — Phase 3
+	// detached path only writes a plist and shells out to launchctl
+	// (which is faked here via fakeLaunchdService). Resolver returns the
+	// fake binary path.
+	fakeBin := buildFakeLlamaServer(t)
+
+	ld := &fakeLaunchdService{Services: map[string]launchd.ServiceInfo{
+		"com.llamactl.qwen2.5-3b-instruct": {
+			Label: "com.llamactl.qwen2.5-3b-instruct", PID: 4242, State: "running",
+		},
+	}}
+	d := &Deps{
+		HardwareDetector: fakeHardwareDetector{Info: hardware.Info{RAMBytes: 16 * (1 << 30)}},
+		HardwareJSONPath: filepath.Join(tmp, "hardware.json"),
+		ServerResolver:   fakeResolverPhase3{Path: fakeBin},
+		ServerProber:     fakeProberPhase3{Version: server.Version{Build: 4500}},
+		ModelStore:       store,
+		LaunchdService:   ld,
+		PortAllocator:    proc.Allocator{},
+		ProcInspector:    &fakeProcInspector{RSSByPID: map[int]int64{4242: 1024 * 1024}, UptimeByPID: map[int]time.Duration{4242: time.Minute}},
+		TokRateReader:    &fakeTokRateReader{},
+		LaunchAgentsDir:  filepath.Join(tmp, "LaunchAgents"),
+		LogsDir:          filepath.Join(tmp, "Logs"),
+		Now:              fakeNow,
+		FS:               OSFileSystem{},
+	}
+
+	if _, _, err := runRoot(t, d, "serve", "qwen2.5-3b-instruct", "--detach"); err != nil {
+		t.Fatalf("serve: %v", err)
+	}
+	plistPath := filepath.Join(d.LaunchAgentsDir, "com.llamactl.qwen2.5-3b-instruct.plist")
+	if _, err := os.Stat(plistPath); err != nil {
+		t.Fatalf("plist should exist: %v", err)
+	}
+	plistBytes, _ := os.ReadFile(plistPath)
+	if !bytes.Contains(plistBytes, []byte("com.llamactl.qwen2.5-3b-instruct")) {
+		t.Errorf("plist missing label:\n%s", plistBytes)
+	}
+
+	// status — service shows running.
+	// Reuse the same ld which still returns the running PID.
+	ld.ListResult = []launchd.ServiceInfo{{Label: "com.llamactl.qwen2.5-3b-instruct", PlistPath: plistPath, PID: 4242, State: "running"}}
+	statusOut, _, err := runRoot(t, d, "status")
+	if err != nil {
+		t.Fatalf("status: %v", err)
+	}
+	if !strings.Contains(statusOut, "qwen2.5-3b-instruct") {
+		t.Errorf("status missing model:\n%s", statusOut)
+	}
+
+	// stop — plist removed.
+	if _, _, err := runRoot(t, d, "stop", "qwen2.5-3b-instruct"); err != nil {
+		t.Fatalf("stop: %v", err)
+	}
+	if _, err := os.Stat(plistPath); !os.IsNotExist(err) {
+		t.Errorf("plist should be gone after stop; err=%v", err)
 	}
 }

@@ -1,9 +1,18 @@
 package cli
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
+	"net"
+	"os"
+	"regexp"
+	"strconv"
+	"strings"
+	"syscall"
 
 	"github.com/spf13/cobra"
 
@@ -73,6 +82,12 @@ func buildDoctorChecks(ctx context.Context, deps *Deps) ([]doctorCheck, string) 
 		llamaServerResolvesCheck(deps),
 		llamaServerVersionCheck(deps),
 		iogpuWiredLimitCheck(info),
+		portConflictsCheck(deps),
+		modelFilesMatchMetadataCheck(deps),
+		orphanedMetadataCheck(deps),
+		diskSpaceCheck(deps),
+		tailscaleCheck(deps),
+		stalePlistsCheck(deps),
 	}
 	return checks, ""
 }
@@ -164,4 +179,215 @@ func iogpuWiredLimitCheck(info hardware.Info) doctorCheck {
 			return true, fmt.Sprintf("%d MB (host has %d MB)", info.IogpuWiredLimitMB, totalMB)
 		},
 	}
+}
+
+// ---- Phase 3 checks ----
+
+// portConflictsCheck verifies that every loaded llamactl service has its
+// declared port actually bound (i.e. not bindable by a free probe).
+func portConflictsCheck(deps *Deps) doctorCheck {
+	return doctorCheck{
+		label:       "port conflicts",
+		remediation: "stop the service (`llamactl stop <id>`) and re-serve",
+		run: func(ctx context.Context, _ *Deps) (bool, string) {
+			if deps.LaunchdService == nil {
+				return true, "(not configured)"
+			}
+			services, err := deps.LaunchdService.List(ctx)
+			if err != nil {
+				return false, "list services: " + err.Error()
+			}
+			var problems []string
+			for _, svc := range services {
+				port := readPortFromPlist(svc.PlistPath)
+				if port == 0 {
+					continue
+				}
+				info, _ := deps.LaunchdService.Print(ctx, svc.Label)
+				if info.PID == 0 {
+					continue
+				}
+				l, lerr := net.Listen("tcp", ":"+strconv.Itoa(port))
+				if lerr == nil {
+					_ = l.Close()
+					id := strings.TrimPrefix(svc.Label, "com.llamactl.")
+					problems = append(problems, fmt.Sprintf("%s loaded but port %d is free", id, port))
+				}
+			}
+			if len(problems) > 0 {
+				return false, strings.Join(problems, "; ")
+			}
+			return true, ""
+		},
+	}
+}
+
+// modelFilesMatchMetadataCheck flags metadata records whose on-disk size
+// is more than 1% off from the recorded SizeBytes.
+func modelFilesMatchMetadataCheck(deps *Deps) doctorCheck {
+	return doctorCheck{
+		label:       "model files match metadata",
+		remediation: "re-add the affected models (`llamactl remove <id> --purge` then `llamactl add <id>`)",
+		run: func(ctx context.Context, _ *Deps) (bool, string) {
+			if deps.ModelStore == nil || deps.FS == nil {
+				return true, "(not configured)"
+			}
+			entries, err := deps.ModelStore.List(ctx)
+			if err != nil {
+				return false, "list metadata: " + err.Error()
+			}
+			var problems []string
+			for _, m := range entries {
+				fi, err := deps.FS.Stat(m.GGUFPath)
+				if err != nil {
+					continue // orphaned metadata is a separate check
+				}
+				size := fi.Size()
+				if absInt64(size-m.SizeBytes)*100 > m.SizeBytes {
+					problems = append(problems,
+						fmt.Sprintf("%s: on-disk %d vs metadata %d", m.ID, size, m.SizeBytes))
+				}
+			}
+			if len(problems) > 0 {
+				return false, strings.Join(problems, "; ")
+			}
+			return true, ""
+		},
+	}
+}
+
+// orphanedMetadataCheck flags metadata records whose GGUF file no longer exists.
+func orphanedMetadataCheck(deps *Deps) doctorCheck {
+	return doctorCheck{
+		label:       "orphaned metadata",
+		remediation: "run `llamactl remove <id>` for each missing entry",
+		run: func(ctx context.Context, _ *Deps) (bool, string) {
+			if deps.ModelStore == nil || deps.FS == nil {
+				return true, "(not configured)"
+			}
+			entries, err := deps.ModelStore.List(ctx)
+			if err != nil {
+				return false, "list metadata: " + err.Error()
+			}
+			var problems []string
+			for _, m := range entries {
+				if _, err := deps.FS.Stat(m.GGUFPath); err != nil {
+					problems = append(problems, fmt.Sprintf("%s: %s missing", m.ID, m.GGUFPath))
+				}
+			}
+			if len(problems) > 0 {
+				return false, strings.Join(problems, "; ")
+			}
+			return true, ""
+		},
+	}
+}
+
+// diskSpaceCheck verifies at least 5 GiB is available in SharedModelsDir.
+func diskSpaceCheck(deps *Deps) doctorCheck {
+	return doctorCheck{
+		label:       "disk space",
+		remediation: "free up space in " + deps.SharedModelsDir + " (run `llamactl remove` or move large files)",
+		run: func(_ context.Context, _ *Deps) (bool, string) {
+			if deps.SharedModelsDir == "" {
+				return true, "(not configured)"
+			}
+			const minFreeGB = 5
+			var stat syscall.Statfs_t
+			if err := syscall.Statfs(deps.SharedModelsDir, &stat); err != nil {
+				return false, "statfs " + deps.SharedModelsDir + ": " + err.Error()
+			}
+			freeBytes := stat.Bavail * uint64(stat.Bsize)
+			freeGB := freeBytes / (1 << 30)
+			if freeGB < minFreeGB {
+				return false, fmt.Sprintf("only %d GiB free in %s; need %d GiB",
+					freeGB, deps.SharedModelsDir, minFreeGB)
+			}
+			return true, fmt.Sprintf("%d GiB free", freeGB)
+		},
+	}
+}
+
+// tailscaleCheck queries `tailscale status --json` if tailscale is on PATH.
+// If absent, the check passes silently with "(not configured)".
+func tailscaleCheck(deps *Deps) doctorCheck {
+	return doctorCheck{
+		label:       "tailscale",
+		remediation: "run `tailscale up` (or remove tailscale from PATH if not needed)",
+		run: func(ctx context.Context, _ *Deps) (bool, string) {
+			if deps.LookPath == nil {
+				return true, "(not configured)"
+			}
+			if _, err := deps.LookPath("tailscale"); err != nil {
+				return true, "(not configured)"
+			}
+			if deps.Runner == nil {
+				return true, "(not configured)"
+			}
+			var buf bytes.Buffer
+			if err := deps.Runner.Run(ctx, "tailscale", []string{"status", "--json"}, "", &buf, io.Discard); err != nil {
+				return false, "tailscale status failed: " + err.Error()
+			}
+			var ts struct {
+				Self struct {
+					Online bool `json:"Online"`
+				} `json:"Self"`
+			}
+			if jerr := json.Unmarshal(buf.Bytes(), &ts); jerr != nil {
+				return false, "parse tailscale JSON: " + jerr.Error()
+			}
+			if !ts.Self.Online {
+				return false, "tailscale offline"
+			}
+			return true, "online"
+		},
+	}
+}
+
+// stalePlistArgvRe matches the first ProgramArguments string in a plist.
+var stalePlistArgvRe = regexp.MustCompile(`<key>ProgramArguments</key>\s*<array>\s*<string>([^<]+)</string>`)
+
+// stalePlistsCheck flags llamactl plists whose first ProgramArguments
+// element no longer points at a real file.
+func stalePlistsCheck(deps *Deps) doctorCheck {
+	return doctorCheck{
+		label:       "stale plists",
+		remediation: "run `llamactl serve <id> --detach` to regenerate the plist",
+		run: func(ctx context.Context, _ *Deps) (bool, string) {
+			if deps.LaunchdService == nil {
+				return true, "(not configured)"
+			}
+			services, err := deps.LaunchdService.List(ctx)
+			if err != nil {
+				return false, "list services: " + err.Error()
+			}
+			var stale []string
+			for _, svc := range services {
+				data, err := os.ReadFile(svc.PlistPath)
+				if err != nil {
+					continue
+				}
+				m := stalePlistArgvRe.FindSubmatch(data)
+				if m == nil {
+					continue
+				}
+				path := string(m[1])
+				if _, err := os.Stat(path); err != nil {
+					id := strings.TrimPrefix(svc.Label, "com.llamactl.")
+					stale = append(stale, fmt.Sprintf("%s: %s missing", id, path))
+				}
+			}
+			if len(stale) > 0 {
+				return false, strings.Join(stale, "; ")
+			}
+			return true, ""
+		},
+	}
+}
+
+func absInt64(n int64) int64 {
+	if n < 0 {
+		return -n
+	}
+	return n
 }

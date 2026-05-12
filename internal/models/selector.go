@@ -11,10 +11,10 @@ import (
 // PreferenceOrder does not fit the computed model budget.
 var ErrNoQuantFits = errors.New("no quant fits available memory")
 
-// gpuAddressableGB returns the GPU-addressable memory in gigabytes, derived
+// GpuAddressableGB returns the GPU-addressable memory in gigabytes, derived
 // from hw.IogpuWiredLimitMB if explicitly set, else from RAMBytes scaled by
 // DefaultIogpuRatio (the empirical macOS default — see quants.go).
-func gpuAddressableGB(hw hardware.Info) float64 {
+func GpuAddressableGB(hw hardware.Info) float64 {
 	if hw.IogpuWiredLimitMB > 0 {
 		return float64(hw.IogpuWiredLimitMB) / 1024.0
 	}
@@ -36,7 +36,7 @@ func SelectQuant(model Model, info hardware.Info, targetCtx int) (Quant, error) 
 		return "", fmt.Errorf("no Q8_0 entry in KVCachePerTokenKB[%s]", model.Arch)
 	}
 
-	usable := gpuAddressableGB(info) - OSOverheadGB - HeadroomGB
+	usable := GpuAddressableGB(info) - OSOverheadGB - HeadroomGB
 	kvCacheGB := float64(targetCtx) * kvPerTok / (1024.0 * 1024.0)
 	budget := usable - kvCacheGB
 	if budget <= 0 {

@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
+	"path/filepath"
 	"syscall"
 	"time"
 
@@ -15,7 +16,9 @@ import (
 	"github.com/gregmundy/llamactl/internal/download"
 	"github.com/gregmundy/llamactl/internal/hardware"
 	"github.com/gregmundy/llamactl/internal/hf"
+	"github.com/gregmundy/llamactl/internal/launchd"
 	"github.com/gregmundy/llamactl/internal/models"
+	"github.com/gregmundy/llamactl/internal/proc"
 	"github.com/gregmundy/llamactl/internal/runner"
 	"github.com/gregmundy/llamactl/internal/server"
 )
@@ -66,6 +69,19 @@ func main() {
 	deps.SharedModelsDir = paths.DataDir()
 	deps.HFCacheDir = paths.CacheDir()
 
+	// Phase 3 wiring.
+	launchAgentsDir := filepath.Join(paths.Home, "Library", "LaunchAgents")
+	logsDir := filepath.Join(paths.Home, "Library", "Logs", "llamactl")
+
+	launchdSvc := &launchd.Service{Runner: run, UID: os.Getuid()}
+	deps.LaunchdService = &cli.LaunchdServiceAdapter{Service: launchdSvc, AgentsDir: launchAgentsDir}
+	deps.PortAllocator = proc.Allocator{}
+	deps.ProcInspector = &proc.Inspector{Runner: run}
+	deps.TokRateReader = &proc.TailRate{}
+	deps.Runner = run
+	deps.LaunchAgentsDir = launchAgentsDir
+	deps.LogsDir = logsDir
+
 	root := cli.NewRoot(deps, llamactlVersion)
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
@@ -73,6 +89,12 @@ func main() {
 	if err := root.ExecuteContext(ctx); err != nil {
 		if errors.Is(err, cli.ErrUserError) {
 			os.Exit(2)
+		}
+		// Foreground `serve` propagates llama-server's own exit code (PRD §9)
+		// so scripts can react to crashes.
+		var exitErr *exec.ExitError
+		if errors.As(err, &exitErr) {
+			os.Exit(exitErr.ExitCode())
 		}
 		fmt.Fprintln(os.Stderr, "llamactl:", err)
 		os.Exit(1)
