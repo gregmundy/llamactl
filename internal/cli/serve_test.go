@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -457,5 +458,209 @@ func TestRunServeDetachedSleepSeam(t *testing.T) {
 		}
 	case <-time.After(1 * time.Second):
 		t.Fatal("runServeDetached did not return within 1s — Sleep seam not honoured")
+	}
+}
+
+func TestServeWithDraftAppendsModelDraftFlag(t *testing.T) {
+	d, ld, _ := makeServeDeps(t)
+	// Seed an additional draft model (main is already seeded by makeServeDeps).
+	store := d.ModelStore.(*fakeModelStore)
+	if err := store.Put(context.Background(), models.Metadata{
+		ID:        "qwen2.5-0.5b-instruct",
+		Repo:      "Qwen/Qwen2.5-0.5B-Instruct-GGUF",
+		Quant:     models.Q4_K_M,
+		GGUFPath:  filepath.Join(t.TempDir(), "draft.gguf"),
+		SizeBytes: 400_000_000,
+		ParamsB:   0.5,
+		Arch:      models.ArchQwen25,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	ld.Services["com.llamactl.qwen2.5-7b-instruct"] = launchd.ServiceInfo{
+		Label: "com.llamactl.qwen2.5-7b-instruct",
+		PID:   12345,
+		State: "running",
+	}
+
+	_, _, err := runRoot(t, d, "serve", "qwen2.5-7b-instruct", "--detach", "--draft", "qwen2.5-0.5b-instruct")
+	if err != nil {
+		t.Fatalf("runRoot: %v", err)
+	}
+
+	plistPath := filepath.Join(d.LaunchAgentsDir, "com.llamactl.qwen2.5-7b-instruct.plist")
+	data, err := os.ReadFile(plistPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := string(data)
+	if !strings.Contains(s, "<string>--model-draft</string>") {
+		t.Errorf("plist missing --model-draft arg:\n%s", s)
+	}
+	if !strings.Contains(s, "<string>--ctx-size-draft</string>") {
+		t.Errorf("plist missing --ctx-size-draft arg:\n%s", s)
+	}
+}
+
+func TestServeDraftNotInstalled(t *testing.T) {
+	d, _, _ := makeServeDeps(t)
+	// Main is installed; draft is not.
+
+	_, _, err := runRoot(t, d, "serve", "qwen2.5-7b-instruct", "--detach", "--draft", "missing-draft-id")
+	if err == nil {
+		t.Fatal("expected error for missing draft id")
+	}
+	if !errors.Is(err, ErrUserError) {
+		t.Errorf("expected ErrUserError; got %v", err)
+	}
+	if !strings.Contains(err.Error(), "missing-draft-id") {
+		t.Errorf("error should name missing draft id; got %v", err)
+	}
+	if !strings.Contains(err.Error(), "llamactl add") {
+		t.Errorf("error should suggest `llamactl add`; got %v", err)
+	}
+}
+
+func TestServeDraftArchMismatch(t *testing.T) {
+	d, _, _ := makeServeDeps(t)
+	store := d.ModelStore.(*fakeModelStore)
+	if err := store.Put(context.Background(), models.Metadata{
+		ID:        "llama-3-1b-instruct",
+		Repo:      "fake/llama-3-1b",
+		Quant:     models.Q4_K_M,
+		GGUFPath:  filepath.Join(t.TempDir(), "llama.gguf"),
+		SizeBytes: 800_000_000,
+		ParamsB:   1,
+		Arch:      models.ArchLlama3,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	_, _, err := runRoot(t, d, "serve", "qwen2.5-7b-instruct", "--detach", "--draft", "llama-3-1b-instruct")
+	if err == nil {
+		t.Fatal("expected error for arch mismatch")
+	}
+	if !errors.Is(err, ErrUserError) {
+		t.Errorf("expected ErrUserError; got %v", err)
+	}
+	if !strings.Contains(err.Error(), "arch") {
+		t.Errorf("error should mention arch mismatch; got %v", err)
+	}
+}
+
+func TestServeDraftCombinedRAMTooBig(t *testing.T) {
+	d, _, _ := makeServeDeps(t)
+	// Override hardware to a tiny host.
+	d.HardwareDetector = fakeHardwareDetector{Info: hardware.Info{RAMBytes: 8 * (1 << 30)}}
+
+	store := d.ModelStore.(*fakeModelStore)
+	// Add a 32B model (too big even before draft).
+	if err := store.Put(context.Background(), models.Metadata{
+		ID:        "qwen2.5-32b-instruct",
+		Repo:      "Qwen/Qwen2.5-32B-Instruct-GGUF",
+		Quant:     models.Q4_K_M,
+		GGUFPath:  filepath.Join(t.TempDir(), "main.gguf"),
+		SizeBytes: 20_000_000_000,
+		ParamsB:   32,
+		Arch:      models.ArchQwen25,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Put(context.Background(), models.Metadata{
+		ID:        "qwen2.5-3b-instruct",
+		Repo:      "Qwen/Qwen2.5-3B-Instruct-GGUF",
+		Quant:     models.Q4_K_M,
+		GGUFPath:  filepath.Join(t.TempDir(), "draft.gguf"),
+		SizeBytes: 2_000_000_000,
+		ParamsB:   3,
+		Arch:      models.ArchQwen25,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	_, _, err := runRoot(t, d, "serve", "qwen2.5-32b-instruct", "--detach", "--draft", "qwen2.5-3b-instruct")
+	if err == nil {
+		t.Fatal("expected error for RAM exhaustion")
+	}
+	if !errors.Is(err, ErrUserError) {
+		t.Errorf("expected ErrUserError; got %v", err)
+	}
+	if !strings.Contains(err.Error(), "RAM") {
+		t.Errorf("error should mention RAM; got %v", err)
+	}
+}
+
+func TestServeDraftWarnsOnRatioOutsideRange(t *testing.T) {
+	d, ld, _ := makeServeDeps(t)
+	store := d.ModelStore.(*fakeModelStore)
+	if err := store.Put(context.Background(), models.Metadata{
+		ID:        "qwen2.5-32b-instruct",
+		Repo:      "Qwen/Qwen2.5-32B-Instruct-GGUF",
+		Quant:     models.Q4_K_M,
+		GGUFPath:  filepath.Join(t.TempDir(), "main.gguf"),
+		SizeBytes: 20_000_000_000,
+		ParamsB:   32,
+		Arch:      models.ArchQwen25,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Put(context.Background(), models.Metadata{
+		ID:        "qwen2.5-0.5b-instruct",
+		Repo:      "Qwen/Qwen2.5-0.5B-Instruct-GGUF",
+		Quant:     models.Q4_K_M,
+		GGUFPath:  filepath.Join(t.TempDir(), "draft.gguf"),
+		SizeBytes: 400_000_000,
+		ParamsB:   0.5,
+		Arch:      models.ArchQwen25,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	ld.Services["com.llamactl.qwen2.5-32b-instruct"] = launchd.ServiceInfo{
+		Label: "com.llamactl.qwen2.5-32b-instruct",
+		PID:   12345,
+		State: "running",
+	}
+
+	// Ratio 32/0.5 = 64× — outside the 5-15× warning band.
+	_, stderr, err := runRoot(t, d, "serve", "qwen2.5-32b-instruct", "--detach", "--draft", "qwen2.5-0.5b-instruct")
+	if err != nil {
+		t.Fatalf("expected no error (warning only); got %v", err)
+	}
+	if !strings.Contains(stderr, "warning") {
+		t.Errorf("expected stderr warning at ratio 64×; got: %s", stderr)
+	}
+}
+
+func TestServeDetachedDraftEmbedsInPlist(t *testing.T) {
+	d, ld, _ := makeServeDeps(t)
+	store := d.ModelStore.(*fakeModelStore)
+	draftPath := filepath.Join(t.TempDir(), "draft.gguf")
+	if err := store.Put(context.Background(), models.Metadata{
+		ID:        "qwen2.5-0.5b-instruct",
+		Repo:      "Qwen/Qwen2.5-0.5B-Instruct-GGUF",
+		Quant:     models.Q4_K_M,
+		GGUFPath:  draftPath,
+		SizeBytes: 400_000_000,
+		ParamsB:   0.5,
+		Arch:      models.ArchQwen25,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	ld.Services["com.llamactl.qwen2.5-7b-instruct"] = launchd.ServiceInfo{
+		Label: "com.llamactl.qwen2.5-7b-instruct",
+		PID:   12345,
+		State: "running",
+	}
+
+	_, _, err := runRoot(t, d, "serve", "qwen2.5-7b-instruct", "--detach", "--draft", "qwen2.5-0.5b-instruct")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	gotPath, ok := launchd.HasDraft(d.LaunchAgentsDir, "com.llamactl.qwen2.5-7b-instruct")
+	if !ok {
+		t.Fatalf("HasDraft returned ok=false for serve --draft")
+	}
+	if gotPath != draftPath {
+		t.Errorf("HasDraft path=%q, want %q", gotPath, draftPath)
 	}
 }
