@@ -124,8 +124,10 @@ func finishAdd(ctx context.Context, d *Deps, id, repoID string, quant models.Qua
 	destDir := filepath.Join(d.SharedModelsDir, id)
 	destPath := filepath.Join(destDir, string(quant)+".gguf")
 
+	alreadyPresent := false
 	if existing, _ := sha256OfFileIfExists(destPath); existing == expectedSHA {
 		fmt.Fprintf(d.Stdout, "already present (matched SHA): %s\n", destPath)
+		alreadyPresent = true
 	} else {
 		req := download.Request{
 			RepoID:         repoID,
@@ -172,8 +174,10 @@ func finishAdd(ctx context.Context, d *Deps, id, repoID string, quant models.Qua
 	if err := d.ModelStore.Put(ctx, meta); err != nil {
 		return fmt.Errorf("write metadata: %w", err)
 	}
-	fmt.Fprintf(d.Stdout, "installed %s (%s, %s) -> %s\n",
-		id, quant, humanFileSize(totalSize), destPath)
+	if !alreadyPresent {
+		fmt.Fprintf(d.Stdout, "installed %s (%s, %s) -> %s\n",
+			id, quant, humanFileSize(totalSize), destPath)
+	}
 	return nil
 }
 

@@ -91,6 +91,31 @@ func TestAddDedupesIfFileAlreadyPresent(t *testing.T) {
 	}
 }
 
+// Dedupe path must print "already present" and NOT also print "installed".
+// Before the fix, finishAdd printed both lines on the dedupe branch, which
+// misled users into thinking a re-download had occurred.
+func TestAddDedupeDoesNotPrintInstalled(t *testing.T) {
+	d, hfc, _, _, shared := makeDeps(t)
+	body := hfc.Bytes["Qwen/Qwen2.5-7B-Instruct-GGUF/qwen2.5-7b-instruct-q4_k_m.gguf"]
+	dest := filepath.Join(shared, "qwen2.5-7b-instruct", "Q4_K_M.gguf")
+	if err := os.MkdirAll(filepath.Dir(dest), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(dest, body, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	stdout, _, err := runRoot(t, d, "add", "qwen2.5-7b-instruct")
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	if !strings.Contains(stdout, "already present") {
+		t.Errorf("stdout should contain 'already present'; got: %s", stdout)
+	}
+	if strings.Contains(stdout, "installed ") {
+		t.Errorf("stdout should NOT contain 'installed ' on dedupe path; got: %s", stdout)
+	}
+}
+
 func TestAddUnknownModelErrors(t *testing.T) {
 	d, _, _, _, _ := makeDeps(t)
 	_, _, err := runRoot(t, d, "add", "nope")
