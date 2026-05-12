@@ -1,34 +1,16 @@
 package proc
 
 import (
-	"context"
 	"errors"
-	"io"
-	"strings"
 	"testing"
 	"time"
+
+	"github.com/gregmundy/llamactl/internal/testutil"
 )
 
-// fakeRunner mirrors runner.CommandRunner with a name+args key.
-type fakeRunner struct {
-	outputs map[string]string
-	errs    map[string]error
-}
-
-func (r *fakeRunner) Run(_ context.Context, name string, args []string, _ string, stdout, _ io.Writer) error {
-	key := name + " " + strings.Join(args, " ")
-	if err, ok := r.errs[key]; ok {
-		return err
-	}
-	if out, ok := r.outputs[key]; ok {
-		_, _ = io.WriteString(stdout, out)
-	}
-	return nil
-}
-
 func TestRSSParsesKilobytesToBytes(t *testing.T) {
-	r := &fakeRunner{
-		outputs: map[string]string{
+	r := &testutil.FakeRunner{
+		Outputs: map[string]string{
 			"ps -o rss= -p 12345": "  1234567\n",
 		},
 	}
@@ -43,8 +25,8 @@ func TestRSSParsesKilobytesToBytes(t *testing.T) {
 }
 
 func TestRSSProcessNotFound(t *testing.T) {
-	r := &fakeRunner{
-		errs: map[string]error{
+	r := &testutil.FakeRunner{
+		Errs: map[string]error{
 			"ps -o rss= -p 99999": errors.New("exit 1"),
 		},
 	}
@@ -56,8 +38,8 @@ func TestRSSProcessNotFound(t *testing.T) {
 }
 
 func TestUptimeMMSS(t *testing.T) {
-	r := &fakeRunner{
-		outputs: map[string]string{
+	r := &testutil.FakeRunner{
+		Outputs: map[string]string{
 			"ps -o etime= -p 100": "05:23\n",
 		},
 	}
@@ -73,7 +55,7 @@ func TestUptimeMMSS(t *testing.T) {
 }
 
 func TestUptimeHHMMSS(t *testing.T) {
-	r := &fakeRunner{outputs: map[string]string{"ps -o etime= -p 100": "1:05:23\n"}}
+	r := &testutil.FakeRunner{Outputs: map[string]string{"ps -o etime= -p 100": "1:05:23\n"}}
 	i := &Inspector{Runner: r}
 	got, err := i.Uptime(100)
 	if err != nil {
@@ -98,7 +80,7 @@ func TestParseEtimeMalformed(t *testing.T) {
 }
 
 func TestUptimeDaysHHMMSS(t *testing.T) {
-	r := &fakeRunner{outputs: map[string]string{"ps -o etime= -p 100": "2-01:05:23\n"}}
+	r := &testutil.FakeRunner{Outputs: map[string]string{"ps -o etime= -p 100": "2-01:05:23\n"}}
 	i := &Inspector{Runner: r}
 	got, err := i.Uptime(100)
 	if err != nil {

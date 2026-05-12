@@ -26,30 +26,8 @@ import (
 	"github.com/gregmundy/llamactl/internal/models"
 	"github.com/gregmundy/llamactl/internal/proc"
 	"github.com/gregmundy/llamactl/internal/server"
+	"github.com/gregmundy/llamactl/internal/testutil"
 )
-
-// intRunner is a fake CommandRunner satisfying both hardware.CommandRunner
-// and server.CommandRunner — Go's structural typing means one fake satisfies
-// both shapes.
-type intRunner struct {
-	outputs map[string]string
-	errs    map[string]error
-}
-
-func (r *intRunner) Run(_ context.Context, name string, args []string, _ string, stdout, _ io.Writer) error {
-	key := name
-	if len(args) > 0 {
-		key += " " + strings.Join(args, " ")
-	}
-	if err, ok := r.errs[key]; ok {
-		return err
-	}
-	if out, ok := r.outputs[key]; ok {
-		_, _ = io.WriteString(stdout, out)
-		return nil
-	}
-	return os.ErrNotExist
-}
 
 func TestEndToEnd_HardwareThenDoctorOnHealthyHost(t *testing.T) {
 	tmp := t.TempDir()
@@ -64,12 +42,10 @@ func TestEndToEnd_HardwareThenDoctorOnHealthyHost(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Hardware detector calls system_profiler with -json args. fakeRunner's
-	// key construction in hardware_test.go uses only the first arg
-	// ("SPHardwareDataType"), but this integration test uses the full args
-	// joined — match that pattern.
-	r := &intRunner{
-		outputs: map[string]string{
+	// Shared FakeRunner satisfies both hardware.CommandRunner and
+	// server.CommandRunner (structural typing). Keys are full-args.
+	r := &testutil.FakeRunner{
+		Outputs: map[string]string{
 			"system_profiler SPHardwareDataType -json": `{"SPHardwareDataType":[{"chip_type":"Apple M2 Pro"}]}`,
 			"system_profiler SPDisplaysDataType -json": `{"SPDisplaysDataType":[{"_name":"d"}]}`,
 			"sysctl hw.memsize":                        "hw.memsize: 34359738368\n",
@@ -78,7 +54,6 @@ func TestEndToEnd_HardwareThenDoctorOnHealthyHost(t *testing.T) {
 			"sw_vers -productVersion":                  "14.4.1\n",
 			binPath + " --version":                     "version: 5000 (deadbeef)\n",
 		},
-		errs: map[string]error{},
 	}
 
 	deps := &Deps{

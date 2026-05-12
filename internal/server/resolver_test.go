@@ -3,33 +3,12 @@ package server
 import (
 	"context"
 	"errors"
-	"io"
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
+
+	"github.com/gregmundy/llamactl/internal/testutil"
 )
-
-type fakeRunner struct {
-	stdoutByCmd map[string]string
-	errByCmd    map[string]error
-}
-
-func (f *fakeRunner) Run(_ context.Context, name string, args []string, _ string, stdout, stderr io.Writer) error {
-	key := name
-	if len(args) > 0 {
-		key += " " + strings.Join(args, " ")
-	}
-	if err, ok := f.errByCmd[key]; ok {
-		return err
-	}
-	if out, ok := f.stdoutByCmd[key]; ok {
-		_, _ = io.WriteString(stdout, out)
-		return nil
-	}
-	_ = stderr
-	return errors.New("unexpected: " + key)
-}
 
 func touch(t *testing.T, path string) {
 	t.Helper()
@@ -55,7 +34,7 @@ func TestResolve_EnvVarWins(t *testing.T) {
 		LookPath:   func(string) (string, error) { return "", errors.New("nope") },
 		HomeDir:    tmp,
 		ConfigPath: "/does/not/exist/config.yaml",
-		Runner:     &fakeRunner{errByCmd: map[string]error{"brew --prefix llama.cpp": errors.New("nope")}},
+		Runner:     &testutil.FakeRunner{Errs: map[string]error{"brew --prefix llama.cpp": errors.New("nope")}},
 	}
 	res, err := r.Resolve(context.Background())
 	if err != nil {
@@ -82,7 +61,7 @@ func TestResolve_ConfigPathSecond(t *testing.T) {
 		LookPath:   func(string) (string, error) { return "", errors.New("nope") },
 		HomeDir:    tmp,
 		ConfigPath: cfgFile,
-		Runner:     &fakeRunner{errByCmd: map[string]error{"brew --prefix llama.cpp": errors.New("nope")}},
+		Runner:     &testutil.FakeRunner{Errs: map[string]error{"brew --prefix llama.cpp": errors.New("nope")}},
 	}
 	res, err := r.Resolve(context.Background())
 	if err != nil {
@@ -104,7 +83,7 @@ func TestResolve_PATHThird(t *testing.T) {
 		},
 		HomeDir:    "/no/such/home",
 		ConfigPath: "/no/such/config",
-		Runner:     &fakeRunner{errByCmd: map[string]error{"brew --prefix llama.cpp": errors.New("nope")}},
+		Runner:     &testutil.FakeRunner{Errs: map[string]error{"brew --prefix llama.cpp": errors.New("nope")}},
 	}
 	res, err := r.Resolve(context.Background())
 	if err != nil {
@@ -124,7 +103,7 @@ func TestResolve_LlamavmShimFourth(t *testing.T) {
 		LookPath:   func(string) (string, error) { return "", errors.New("nope") },
 		HomeDir:    tmp,
 		ConfigPath: "/no/such",
-		Runner:     &fakeRunner{errByCmd: map[string]error{"brew --prefix llama.cpp": errors.New("nope")}},
+		Runner:     &testutil.FakeRunner{Errs: map[string]error{"brew --prefix llama.cpp": errors.New("nope")}},
 	}
 	res, err := r.Resolve(context.Background())
 	if err != nil {
@@ -145,7 +124,7 @@ func TestResolve_BrewFifth(t *testing.T) {
 		LookPath:   func(string) (string, error) { return "", errors.New("nope") },
 		HomeDir:    "/no/such",
 		ConfigPath: "/no/such",
-		Runner: &fakeRunner{stdoutByCmd: map[string]string{
+		Runner: &testutil.FakeRunner{Outputs: map[string]string{
 			"brew --prefix llama.cpp": brewPrefix + "\n",
 		}},
 	}
@@ -177,7 +156,7 @@ func TestResolverMemoizes(t *testing.T) {
 		LookPath:   func(string) (string, error) { return "", errors.New("nope") },
 		HomeDir:    tmp,
 		ConfigPath: "/does/not/exist/config.yaml",
-		Runner:     &fakeRunner{errByCmd: map[string]error{"brew --prefix llama.cpp": errors.New("nope")}},
+		Runner:     &testutil.FakeRunner{Errs: map[string]error{"brew --prefix llama.cpp": errors.New("nope")}},
 	}
 	if _, err := r.Resolve(context.Background()); err != nil {
 		t.Fatalf("first Resolve: %v", err)
@@ -204,7 +183,7 @@ func TestResolverDoesNotCacheFailures(t *testing.T) {
 		},
 		HomeDir:    "/no/such",
 		ConfigPath: "/no/such",
-		Runner:     &fakeRunner{errByCmd: map[string]error{"brew --prefix llama.cpp": errors.New("not installed")}},
+		Runner:     &testutil.FakeRunner{Errs: map[string]error{"brew --prefix llama.cpp": errors.New("not installed")}},
 	}
 	if _, err := r.Resolve(context.Background()); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("first: want ErrNotFound, got %v", err)
@@ -235,7 +214,7 @@ func TestResolve_NoneReturnsErrNotFound(t *testing.T) {
 		LookPath:   func(string) (string, error) { return "", errors.New("nope") },
 		HomeDir:    "/no/such",
 		ConfigPath: "/no/such",
-		Runner:     &fakeRunner{errByCmd: map[string]error{"brew --prefix llama.cpp": errors.New("not installed")}},
+		Runner:     &testutil.FakeRunner{Errs: map[string]error{"brew --prefix llama.cpp": errors.New("not installed")}},
 	}
 	_, err := r.Resolve(context.Background())
 	if !errors.Is(err, ErrNotFound) {

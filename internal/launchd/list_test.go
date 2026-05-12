@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"sort"
 	"testing"
+
+	"github.com/gregmundy/llamactl/internal/testutil"
 )
 
 func TestListLLMServicesScansDirectory(t *testing.T) {
@@ -22,7 +24,7 @@ func TestListLLMServicesScansDirectory(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	r := &fakeRunner{}
+	r := &testutil.FakeRunner{}
 	s := &Service{Runner: r, UID: 501}
 
 	infos, err := ListLLMServices(context.Background(), dir, s)
@@ -56,7 +58,7 @@ func TestListLLMServicesScansDirectory(t *testing.T) {
 
 func TestListLLMServicesEmptyDir(t *testing.T) {
 	dir := t.TempDir()
-	r := &fakeRunner{}
+	r := &testutil.FakeRunner{}
 	s := &Service{Runner: r, UID: 501}
 	infos, err := ListLLMServices(context.Background(), dir, s)
 	if err != nil {
@@ -68,7 +70,7 @@ func TestListLLMServicesEmptyDir(t *testing.T) {
 }
 
 func TestListLLMServicesMissingDir(t *testing.T) {
-	r := &fakeRunner{}
+	r := &testutil.FakeRunner{}
 	s := &Service{Runner: r, UID: 501}
 	infos, err := ListLLMServices(context.Background(), "/no/such/dir", s)
 	if err != nil {

@@ -4,36 +4,18 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"io"
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/gregmundy/llamactl/internal/testutil"
 )
 
-// fakeRunner replays canned stdout per (name, args[0]) and never invokes a
-// real binary. Unmatched calls fail the test.
-type fakeRunner struct {
-	t       *testing.T
-	outputs map[string]string // key: name + " " + args[0]
-	errs    map[string]error
-}
-
-func (f *fakeRunner) Run(_ context.Context, name string, args []string, _ string, stdout, stderr io.Writer) error {
-	key := name
-	if len(args) > 0 {
-		key = name + " " + args[0]
-	}
-	if err, ok := f.errs[key]; ok {
-		return err
-	}
-	out, ok := f.outputs[key]
-	if !ok {
-		f.t.Fatalf("unexpected runner call: %s %v", name, args)
-	}
-	_, _ = io.WriteString(stdout, out)
-	_ = stderr
-	return nil
-}
+// Detector tests use the shared testutil.FakeRunner. Keys are
+// "name + ' ' + strings.Join(args, ' ')"; an earlier local fake here keyed
+// by only args[0], but that's now unified to the full-args form (the production
+// detector passes "-json" to system_profiler — those keys are spelled out
+// here to match the actual call shape).
 
 func readFixture(t *testing.T, name string) string {
 	t.Helper()
@@ -45,15 +27,14 @@ func readFixture(t *testing.T, name string) string {
 }
 
 func TestDetect_ReturnsZeroValueWhenAllCommandsFail(t *testing.T) {
-	runner := &fakeRunner{
-		t: t,
-		errs: map[string]error{
-			"system_profiler SPHardwareDataType": errors.New("fail"),
-			"system_profiler SPDisplaysDataType": errors.New("fail"),
-			"sysctl hw.memsize":                  errors.New("fail"),
-			"sysctl iogpu.wired_limit_mb":        errors.New("fail"),
-			"sysctl kern.hv_vmm_present":         errors.New("fail"),
-			"sw_vers -productVersion":            errors.New("fail"),
+	runner := &testutil.FakeRunner{
+		Errs: map[string]error{
+			"system_profiler SPHardwareDataType -json": errors.New("fail"),
+			"system_profiler SPDisplaysDataType -json": errors.New("fail"),
+			"sysctl hw.memsize":                        errors.New("fail"),
+			"sysctl iogpu.wired_limit_mb":              errors.New("fail"),
+			"sysctl kern.hv_vmm_present":               errors.New("fail"),
+			"sw_vers -productVersion":                  errors.New("fail"),
 		},
 	}
 	d := &Detector{Runner: runner}
@@ -82,17 +63,16 @@ func TestInfo_JSONRoundTrip(t *testing.T) {
 }
 
 func TestDetect_ParsesChipFromSystemProfiler(t *testing.T) {
-	runner := &fakeRunner{
-		t: t,
-		outputs: map[string]string{
-			"system_profiler SPHardwareDataType": readFixture(t, "sphardware_m2pro.json"),
+	runner := &testutil.FakeRunner{
+		Outputs: map[string]string{
+			"system_profiler SPHardwareDataType -json": readFixture(t, "sphardware_m2pro.json"),
 		},
-		errs: map[string]error{
-			"system_profiler SPDisplaysDataType": errors.New("not needed"),
-			"sysctl hw.memsize":                  errors.New("not needed"),
-			"sysctl iogpu.wired_limit_mb":        errors.New("not needed"),
-			"sysctl kern.hv_vmm_present":         errors.New("not needed"),
-			"sw_vers -productVersion":            errors.New("not needed"),
+		Errs: map[string]error{
+			"system_profiler SPDisplaysDataType -json": errors.New("not needed"),
+			"sysctl hw.memsize":                        errors.New("not needed"),
+			"sysctl iogpu.wired_limit_mb":              errors.New("not needed"),
+			"sysctl kern.hv_vmm_present":               errors.New("not needed"),
+			"sw_vers -productVersion":                  errors.New("not needed"),
 		},
 	}
 	info, _ := (&Detector{Runner: runner}).Detect(context.Background())
@@ -123,17 +103,16 @@ func TestParseChipGen(t *testing.T) {
 }
 
 func TestDetect_ParsesRAMAndOSVersion(t *testing.T) {
-	runner := &fakeRunner{
-		t: t,
-		outputs: map[string]string{
-			"system_profiler SPHardwareDataType": readFixture(t, "sphardware_m2pro.json"),
-			"sysctl hw.memsize":                  "hw.memsize: 34359738368\n",
-			"sw_vers -productVersion":            "14.4.1\n",
+	runner := &testutil.FakeRunner{
+		Outputs: map[string]string{
+			"system_profiler SPHardwareDataType -json": readFixture(t, "sphardware_m2pro.json"),
+			"sysctl hw.memsize":                        "hw.memsize: 34359738368\n",
+			"sw_vers -productVersion":                  "14.4.1\n",
 		},
-		errs: map[string]error{
-			"system_profiler SPDisplaysDataType": errors.New("not needed"),
-			"sysctl iogpu.wired_limit_mb":        errors.New("not needed"),
-			"sysctl kern.hv_vmm_present":         errors.New("not needed"),
+		Errs: map[string]error{
+			"system_profiler SPDisplaysDataType -json": errors.New("not needed"),
+			"sysctl iogpu.wired_limit_mb":              errors.New("not needed"),
+			"sysctl kern.hv_vmm_present":               errors.New("not needed"),
 		},
 	}
 	info, _ := (&Detector{Runner: runner}).Detect(context.Background())
@@ -157,17 +136,16 @@ func TestDetect_ParsesIogpuWiredLimit(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			runner := &fakeRunner{
-				t: t,
-				outputs: map[string]string{
+			runner := &testutil.FakeRunner{
+				Outputs: map[string]string{
 					"sysctl iogpu.wired_limit_mb": c.out,
 				},
-				errs: map[string]error{
-					"system_profiler SPHardwareDataType": errors.New("not needed"),
-					"system_profiler SPDisplaysDataType": errors.New("not needed"),
-					"sysctl hw.memsize":                  errors.New("not needed"),
-					"sysctl kern.hv_vmm_present":         errors.New("not needed"),
-					"sw_vers -productVersion":            errors.New("not needed"),
+				Errs: map[string]error{
+					"system_profiler SPHardwareDataType -json": errors.New("not needed"),
+					"system_profiler SPDisplaysDataType -json": errors.New("not needed"),
+					"sysctl hw.memsize":                        errors.New("not needed"),
+					"sysctl kern.hv_vmm_present":               errors.New("not needed"),
+					"sw_vers -productVersion":                  errors.New("not needed"),
 				},
 			}
 			info, _ := (&Detector{Runner: runner}).Detect(context.Background())
@@ -210,17 +188,16 @@ func TestDetect_HypervisorAndMetal(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			runner := &fakeRunner{
-				t: t,
-				outputs: map[string]string{
-					"sysctl kern.hv_vmm_present":         c.hvmm,
-					"system_profiler SPDisplaysDataType": c.displays,
+			runner := &testutil.FakeRunner{
+				Outputs: map[string]string{
+					"sysctl kern.hv_vmm_present":               c.hvmm,
+					"system_profiler SPDisplaysDataType -json": c.displays,
 				},
-				errs: map[string]error{
-					"system_profiler SPHardwareDataType": errors.New("not needed"),
-					"sysctl hw.memsize":                  errors.New("not needed"),
-					"sysctl iogpu.wired_limit_mb":        errors.New("not needed"),
-					"sw_vers -productVersion":            errors.New("not needed"),
+				Errs: map[string]error{
+					"system_profiler SPHardwareDataType -json": errors.New("not needed"),
+					"sysctl hw.memsize":                        errors.New("not needed"),
+					"sysctl iogpu.wired_limit_mb":              errors.New("not needed"),
+					"sw_vers -productVersion":                  errors.New("not needed"),
 				},
 			}
 			info, _ := (&Detector{Runner: runner}).Detect(context.Background())
