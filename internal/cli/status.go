@@ -8,6 +8,7 @@ import (
 	"io/fs"
 	"os"
 	"regexp"
+	"strings"
 	"text/tabwriter"
 	"time"
 
@@ -57,10 +58,7 @@ func runStatus(ctx context.Context, d *Deps, asJSON bool) error {
 
 	rows := make([]statusRow, 0, len(services))
 	for _, svc := range services {
-		id := svc.Label
-		if len(id) > len("com.llamactl.") && id[:len("com.llamactl.")] == "com.llamactl." {
-			id = id[len("com.llamactl."):]
-		}
+		id := strings.TrimPrefix(svc.Label, "com.llamactl.")
 		port := readPortFromPlist(svc.PlistPath)
 
 		row := statusRow{ModelID: id, Port: port}
