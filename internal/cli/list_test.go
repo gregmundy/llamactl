@@ -71,9 +71,12 @@ func TestListShowsLegacyMetadataWithoutParamsB(t *testing.T) {
 	if !strings.Contains(out, "legacy-model") {
 		t.Errorf("output missing legacy entry:\n%s", out)
 	}
-	// PARAMS column should be blank for legacy entries — must not show stray "0B".
+	// PARAMS column should show "?" for legacy entries with no ParamsB.
+	if !strings.Contains(out, "?") {
+		t.Errorf("PARAMS column should show '?' for unknown params:\n%s", out)
+	}
 	if strings.Contains(out, "0B") {
-		t.Errorf("PARAMS column should be blank, not '0B':\n%s", out)
+		t.Errorf("PARAMS column should not show '0B':\n%s", out)
 	}
 }
 
@@ -121,5 +124,31 @@ func TestListShowsLastServedAt(t *testing.T) {
 	}
 	if !strings.Contains(out, "2026-05-11") {
 		t.Errorf("output missing last-served date:\n%s", out)
+	}
+}
+
+func TestListShowsQuestionMarkForUnknownParams(t *testing.T) {
+	dir := t.TempDir()
+	existing := filepath.Join(dir, "x.gguf")
+	if err := os.WriteFile(existing, []byte("xxx"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	store := newFakeModelStore()
+	_ = store.Put(context.Background(), models.Metadata{
+		ID:       "no-params",
+		Quant:    models.Q4_K_M,
+		GGUFPath: existing,
+		SizeBytes: 3,
+		AddedAt:  time.Date(2026, 5, 11, 0, 0, 0, 0, time.UTC),
+		// ParamsB intentionally zero — simulates an HF-path add where the
+		// GGUF parser couldn't determine param count.
+	})
+	d := &Deps{ModelStore: store, FS: OSFileSystem{}}
+	out, _, err := runRoot(t, d, "list")
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	if !strings.Contains(out, "?") {
+		t.Errorf("expected '?' for unknown params:\n%s", out)
 	}
 }
