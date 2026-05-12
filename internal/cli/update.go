@@ -48,13 +48,14 @@ func runUpdate(ctx context.Context, d *Deps, currentVersion string, refresh bool
 	if err != nil {
 		return fmt.Errorf("fetch latest version: %w", err)
 	}
-	fmt.Fprintf(d.Stdout, "current: %s\n", currentVersion)
-	fmt.Fprintf(d.Stdout, "latest:  %s\n", normalizeWithV(latest))
 
 	if !updateAvailable(currentVersion, latest) {
 		fmt.Fprintf(d.Stdout, "already on latest (%s)\n", currentVersion)
 		return nil
 	}
+
+	fmt.Fprintf(d.Stdout, "current: %s\n", currentVersion)
+	fmt.Fprintf(d.Stdout, "latest:  %s\n", normalizeWithV(latest))
 
 	execPath, _ := executable()
 	if !isBrewInstall(execPath) {
@@ -81,7 +82,10 @@ func runUpdate(ctx context.Context, d *Deps, currentVersion string, refresh bool
 }
 
 func isBrewInstall(path string) bool {
-	return strings.HasPrefix(path, "/opt/homebrew/") || strings.HasPrefix(path, "/usr/local/Cellar/")
+	return strings.HasPrefix(path, "/opt/homebrew/Caskroom/llamactl/") ||
+		path == "/opt/homebrew/bin/llamactl" ||
+		strings.HasPrefix(path, "/usr/local/Caskroom/llamactl/") ||
+		path == "/usr/local/bin/llamactl"
 }
 
 func normalizeWithV(v string) string {

@@ -24,13 +24,18 @@ func TestUpdateOnLatest(t *testing.T) {
 	d := &Deps{Stdout: &out, Stderr: io.Discard}
 	err := runUpdate(context.Background(), d, "v1.3.0", false,
 		func(ctx context.Context, refresh bool) (string, error) { return "1.3.0", nil },
-		func() (string, error) { return "/opt/homebrew/Cellar/llamactl/1.3.0/bin/llamactl", nil },
+		func() (string, error) { return "/opt/homebrew/Caskroom/llamactl/1.3.0/llamactl", nil },
 		nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(out.String(), "already on latest") {
-		t.Fatalf("missing 'already on latest':\n%s", out.String())
+	s := out.String()
+	if !strings.Contains(s, "already on latest") {
+		t.Fatalf("missing 'already on latest':\n%s", s)
+	}
+	// Spec §5.1: on-latest output must NOT include current:/latest: lines.
+	if strings.Contains(s, "current:") || strings.Contains(s, "latest:") {
+		t.Fatalf("on-latest output must not include current:/latest: lines:\n%s", s)
 	}
 }
 
@@ -40,7 +45,7 @@ func TestUpdateBrewInstalledRunsBrew(t *testing.T) {
 	d := &Deps{Stdout: &out, Stderr: io.Discard}
 	err := runUpdate(context.Background(), d, "v1.2.0", false,
 		func(ctx context.Context, refresh bool) (string, error) { return "1.3.0", nil },
-		func() (string, error) { return "/opt/homebrew/Cellar/llamactl/1.2.0/bin/llamactl", nil },
+		func() (string, error) { return "/opt/homebrew/Caskroom/llamactl/1.2.0/llamactl", nil },
 		runner)
 	if err != nil {
 		t.Fatal(err)
@@ -53,6 +58,22 @@ func TestUpdateBrewInstalledRunsBrew(t *testing.T) {
 	}
 	if !found {
 		t.Fatalf("expected brew upgrade call; captured: %v", runner.calls)
+	}
+}
+
+func TestUpdateBrewSymlinkDetected(t *testing.T) {
+	var out bytes.Buffer
+	runner := &recordingRunner{}
+	d := &Deps{Stdout: &out, Stderr: io.Discard}
+	err := runUpdate(context.Background(), d, "v1.2.0", false,
+		func(ctx context.Context, refresh bool) (string, error) { return "1.3.0", nil },
+		func() (string, error) { return "/opt/homebrew/bin/llamactl", nil },
+		runner)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(runner.calls) == 0 {
+		t.Fatal("/opt/homebrew/bin/llamactl symlink not detected as brew install; expected brew runner calls")
 	}
 }
 
@@ -78,9 +99,30 @@ func TestUpdateIntelBrewPathDetected(t *testing.T) {
 	d := &Deps{Stdout: &out, Stderr: io.Discard}
 	_ = runUpdate(context.Background(), d, "v1.2.0", false,
 		func(ctx context.Context, refresh bool) (string, error) { return "1.3.0", nil },
-		func() (string, error) { return "/usr/local/Cellar/llamactl/1.2.0/bin/llamactl", nil },
+		func() (string, error) { return "/usr/local/Caskroom/llamactl/1.2.0/llamactl", nil },
 		runner)
 	if len(runner.calls) == 0 {
-		t.Fatal("Intel brew path not detected; expected brew runner calls")
+		t.Fatal("Intel brew Caskroom path not detected; expected brew runner calls")
+	}
+}
+
+func TestUpdateRefreshBypassesCache(t *testing.T) {
+	var gotRefresh bool
+	var out bytes.Buffer
+	runner := &recordingRunner{}
+	d := &Deps{Stdout: &out, Stderr: io.Discard}
+	fetcher := func(ctx context.Context, refresh bool) (string, error) {
+		gotRefresh = refresh
+		return "1.3.0", nil
+	}
+	err := runUpdate(context.Background(), d, "v1.2.0", true,
+		fetcher,
+		func() (string, error) { return "/opt/homebrew/Caskroom/llamactl/1.2.0/llamactl", nil },
+		runner)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !gotRefresh {
+		t.Fatal("expected fetcher to be called with refresh=true, but got refresh=false")
 	}
 }
