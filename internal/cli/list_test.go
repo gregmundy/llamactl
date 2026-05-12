@@ -98,3 +98,28 @@ func TestListShowsParamsBForPhase25Entries(t *testing.T) {
 		t.Errorf("output should show 8B; got:\n%s", out)
 	}
 }
+
+func TestListShowsLastServedAt(t *testing.T) {
+	dir := t.TempDir()
+	existing := filepath.Join(dir, "new.gguf")
+	if err := os.WriteFile(existing, []byte("xxx"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	store := newFakeModelStore()
+	_ = store.Put(context.Background(), models.Metadata{
+		ID: "qwen2.5-7b-instruct", Quant: models.Q4_K_M, GGUFPath: existing, SizeBytes: 3,
+		AddedAt:      time.Date(2026, 5, 11, 0, 0, 0, 0, time.UTC),
+		LastServedAt: time.Date(2026, 5, 11, 12, 0, 0, 0, time.UTC),
+	})
+	d := &Deps{ModelStore: store, FS: OSFileSystem{}}
+	out, _, err := runRoot(t, d, "list")
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	if !strings.Contains(out, "LAST-SERVED") {
+		t.Errorf("output missing LAST-SERVED header:\n%s", out)
+	}
+	if !strings.Contains(out, "2026-05-11") {
+		t.Errorf("output missing last-served date:\n%s", out)
+	}
+}
