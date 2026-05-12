@@ -428,6 +428,49 @@ func TestDoctor_LogFiles_Oversized_Failure(t *testing.T) {
 	}
 }
 
+func TestDoctor_HFCacheSize_NotConfigured_OK(t *testing.T) {
+	d := healthyDoctorDeps(t)
+	// HFCacheDir left empty.
+	out, _, _ := runRoot(t, d, "doctor")
+	if strings.Contains(out, "✗ HuggingFace API cache size") {
+		t.Errorf("should pass when HFCacheDir is unset:\n%s", out)
+	}
+	if !strings.Contains(out, "HuggingFace API cache size") {
+		t.Errorf("expected hf cache size check in transcript:\n%s", out)
+	}
+}
+
+func TestDoctor_HFCacheSize_OK(t *testing.T) {
+	tmp := t.TempDir()
+	if err := os.WriteFile(filepath.Join(tmp, "small.json"), []byte("hi"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	d := healthyDoctorDeps(t)
+	d.HFCacheDir = tmp
+	out, _, _ := runRoot(t, d, "doctor")
+	if strings.Contains(out, "✗ HuggingFace API cache size") {
+		t.Errorf("should pass for under-limit cache:\n%s", out)
+	}
+}
+
+func TestDoctor_HFCacheSize_Oversized_Failure(t *testing.T) {
+	tmp := t.TempDir()
+	big := filepath.Join(tmp, "big.json")
+	// 501 MiB; safely past the 500 MiB threshold.
+	if err := os.WriteFile(big, make([]byte, (500<<20)+1), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	d := healthyDoctorDeps(t)
+	d.HFCacheDir = tmp
+	out, _, _ := runRoot(t, d, "doctor")
+	if !strings.Contains(out, "✗ HuggingFace API cache size") {
+		t.Errorf("expected hf cache size check to fail:\n%s", out)
+	}
+	if !strings.Contains(out, "cache prune") {
+		t.Errorf("expected remediation pointing at `cache prune`:\n%s", out)
+	}
+}
+
 func TestDoctor_StalePlists_Failure(t *testing.T) {
 	tmp := t.TempDir()
 	plistPath := filepath.Join(tmp, "com.llamactl.x.plist")

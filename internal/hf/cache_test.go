@@ -1,6 +1,8 @@
 package hf
 
 import (
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 )
@@ -53,5 +55,55 @@ func TestCacheMiss(t *testing.T) {
 	}
 	if got != nil || fresh {
 		t.Errorf("miss should return nil/false, got (%v, %v)", got, fresh)
+	}
+}
+
+func TestCachePruneOlderThan(t *testing.T) {
+	dir := t.TempDir()
+	c := NewCache(dir)
+
+	oldFile := filepath.Join(dir, "ns1", "old.json")
+	if err := os.MkdirAll(filepath.Dir(oldFile), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(oldFile, []byte(`{}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	oldTime := time.Now().Add(-60 * 24 * time.Hour)
+	if err := os.Chtimes(oldFile, oldTime, oldTime); err != nil {
+		t.Fatal(err)
+	}
+
+	freshFile := filepath.Join(dir, "ns2", "fresh.json")
+	if err := os.MkdirAll(filepath.Dir(freshFile), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(freshFile, []byte(`{}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	n, err := c.PruneOlderThan(30 * 24 * time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n != 1 {
+		t.Fatalf("removed=%d, want 1", n)
+	}
+	if _, err := os.Stat(oldFile); !os.IsNotExist(err) {
+		t.Fatal("old file should be removed")
+	}
+	if _, err := os.Stat(freshFile); err != nil {
+		t.Fatal("fresh file should still exist")
+	}
+}
+
+func TestCachePruneOlderThanMissingRoot(t *testing.T) {
+	c := NewCache("/definitely-does-not-exist/llamactl-test")
+	n, err := c.PruneOlderThan(1 * time.Hour)
+	if err != nil {
+		t.Fatalf("missing root should not error: %v", err)
+	}
+	if n != 0 {
+		t.Fatalf("removed=%d, want 0", n)
 	}
 }

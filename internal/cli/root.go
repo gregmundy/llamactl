@@ -27,5 +27,6 @@ func NewRoot(deps *Deps, llamactlVersion string) *cobra.Command {
 	root.AddCommand(newServeCmd(deps))
 	root.AddCommand(newStopCmd(deps))
 	root.AddCommand(newStatusCmd(deps))
+	root.AddCommand(newCacheCmd(deps))
 	return root
 }

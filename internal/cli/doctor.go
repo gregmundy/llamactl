@@ -10,6 +10,7 @@ import (
 	"io/fs"
 	"net"
 	"os"
+	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
@@ -101,6 +102,7 @@ func buildDoctorChecks(ctx context.Context, deps *Deps) ([]doctorCheck, string) 
 		tailscaleCheck(deps),
 		stalePlistsCheck(deps),
 		logFilesNotOversizedCheck(deps),
+		hfCacheSizeCheck(deps),
 	}
 	return checks, ""
 }
@@ -135,6 +137,40 @@ func logFilesNotOversizedCheck(deps *Deps) doctorCheck {
 				if info.Size() > 10<<20 {
 					return false, fmt.Sprintf("%s exceeds 10 MiB", e.Name())
 				}
+			}
+			return true, ""
+		},
+	}
+}
+
+// hfCacheSizeCheck warns when the HF API response cache exceeds 500 MiB.
+// The Client also lazily prunes 30-day-stale entries on use; this check
+// catches cases where prune isn't enough or the user hasn't run a Search
+// recently.
+func hfCacheSizeCheck(d *Deps) doctorCheck {
+	return doctorCheck{
+		label:       "HuggingFace API cache size (<500 MiB)",
+		remediation: "run: llamactl cache prune",
+		run: func(_ context.Context, deps *Deps) (bool, string) {
+			if deps.HFCacheDir == "" {
+				return true, "(not configured)"
+			}
+			var total int64
+			err := filepath.WalkDir(deps.HFCacheDir, func(_ string, e fs.DirEntry, werr error) error {
+				if werr != nil || e.IsDir() {
+					return nil
+				}
+				info, ierr := e.Info()
+				if ierr == nil {
+					total += info.Size()
+				}
+				return nil
+			})
+			if err != nil && !os.IsNotExist(err) {
+				return false, err.Error()
+			}
+			if total > 500<<20 {
+				return false, fmt.Sprintf("cache is %d MiB", total>>20)
 			}
 			return true, ""
 		},
