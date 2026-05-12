@@ -33,7 +33,7 @@ func main() {
 	}
 	run := runner.ExecRunner{}
 
-	resolver := server.Resolver{
+	resolver := &server.Resolver{
 		Getenv:     os.Getenv,
 		LookPath:   exec.LookPath,
 		HomeDir:    paths.Home,
@@ -61,7 +61,7 @@ func main() {
 	}
 
 	deps.HFClient = hfClient
-	deps.Downloader = &download.Downloader{Ranger: hfClient}
+	deps.Downloader = &download.Downloader{Ranger: hfClient, Stderr: os.Stderr}
 	deps.QuantSelector = cli.SelectorAdapter{}
 	deps.ModelStore = models.NewFileStore(paths.ModelsMetaDir())
 	deps.FS = cli.OSFileSystem{}

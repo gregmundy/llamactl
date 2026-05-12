@@ -8,6 +8,8 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"os"
+	"sync"
 	"time"
 )
 
@@ -29,6 +31,20 @@ type Client struct {
 	httpClient *http.Client
 	token      string // from HF_TOKEN / LLAMACTL_HF_TOKEN; empty if not set
 	retrySleep func(time.Duration)
+	prunedOnce sync.Once
+}
+
+// pruneCacheOnce runs a best-effort 30-day cache prune at most once per
+// Client lifetime. Errors are logged to stderr; they never block the call.
+func (c *Client) pruneCacheOnce() {
+	if c.cache == nil {
+		return
+	}
+	c.prunedOnce.Do(func() {
+		if _, err := c.cache.PruneOlderThan(30 * 24 * time.Hour); err != nil {
+			fmt.Fprintf(os.Stderr, "llamactl: warning: hf cache prune: %v\n", err)
+		}
+	})
 }
 
 // NewClient returns a Client. If httpClient is nil, http.DefaultClient is used.
@@ -59,6 +75,7 @@ func (c *Client) SearchRefresh(ctx context.Context, query string) ([]SearchHit, 
 }
 
 func (c *Client) search(ctx context.Context, query string, refresh bool) ([]SearchHit, error) {
+	c.pruneCacheOnce()
 	if !refresh {
 		if data, fresh, err := c.cache.Get("hf-search", query, SearchTTL); err == nil && fresh && data != nil {
 			var hits []SearchHit
@@ -83,6 +100,7 @@ func (c *Client) search(ctx context.Context, query string, refresh bool) ([]Sear
 
 // RepoInfo fetches /api/models/<repoID>. Cached with RepoTTL.
 func (c *Client) RepoInfo(ctx context.Context, repoID string) (Repo, error) {
+	c.pruneCacheOnce()
 	if data, fresh, err := c.cache.Get("hf-repo-v2", repoID, RepoTTL); err == nil && fresh && data != nil {
 		var r Repo
 		if jerr := json.Unmarshal(data, &r); jerr == nil {

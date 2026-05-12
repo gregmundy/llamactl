@@ -305,6 +305,27 @@ func TestDoctor_DiskSpace_Failure(t *testing.T) {
 	}
 }
 
+// When SharedModelsDir doesn't exist (fresh install, before any `add`), the
+// remediation should tell the user to `mkdir -p`, not to free up space.
+func TestDoctor_DiskSpace_MissingDir_SuggestsMkdir(t *testing.T) {
+	d := healthyDoctorDeps(t)
+	missing := "/definitely-does-not-exist/llamactl-test-xyz"
+	d.SharedModelsDir = missing
+	out, _, _ := runRoot(t, d, "doctor")
+	if !strings.Contains(out, "✗ disk space") {
+		t.Fatalf("expected disk space check to fail:\n%s", out)
+	}
+	if !strings.Contains(out, "mkdir") {
+		t.Errorf("expected remediation to mention 'mkdir' for missing dir; got:\n%s", out)
+	}
+	if !strings.Contains(out, missing) {
+		t.Errorf("expected remediation to include the path %q; got:\n%s", missing, out)
+	}
+	if strings.Contains(out, "free up space") {
+		t.Errorf("misleading 'free up space' remediation shown for a missing dir:\n%s", out)
+	}
+}
+
 func TestDoctor_Tailscale_NotConfigured_Skipped(t *testing.T) {
 	d := healthyDoctorDeps(t)
 	out, _, _ := runRoot(t, d, "doctor")
@@ -361,6 +382,92 @@ func TestDoctor_StalePlists_OK(t *testing.T) {
 	out, _, _ := runRoot(t, d, "doctor")
 	if strings.Contains(out, "✗ stale plists") {
 		t.Errorf("should pass:\n%s", out)
+	}
+}
+
+func TestDoctor_LogFiles_NotConfigured_OK(t *testing.T) {
+	d := healthyDoctorDeps(t)
+	// healthyDoctorDeps leaves LogsDir empty.
+	out, _, _ := runRoot(t, d, "doctor")
+	if strings.Contains(out, "✗ Log files within size limit") {
+		t.Errorf("should pass when LogsDir is unset:\n%s", out)
+	}
+	if !strings.Contains(out, "Log files within size limit") {
+		t.Errorf("expected new log-size check in transcript:\n%s", out)
+	}
+}
+
+func TestDoctor_LogFiles_OK(t *testing.T) {
+	tmp := t.TempDir()
+	// Small log file under the limit.
+	if err := os.WriteFile(filepath.Join(tmp, "tiny.log"), []byte("hi"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	d := healthyDoctorDeps(t)
+	d.LogsDir = tmp
+	out, _, _ := runRoot(t, d, "doctor")
+	if strings.Contains(out, "✗ Log files within size limit") {
+		t.Errorf("should pass for under-limit log:\n%s", out)
+	}
+}
+
+func TestDoctor_LogFiles_Oversized_Failure(t *testing.T) {
+	tmp := t.TempDir()
+	big := filepath.Join(tmp, "huge.log")
+	if err := os.WriteFile(big, []byte(strings.Repeat("x", (10<<20)+1)), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	d := healthyDoctorDeps(t)
+	d.LogsDir = tmp
+	out, _, _ := runRoot(t, d, "doctor")
+	if !strings.Contains(out, "✗ Log files within size limit") {
+		t.Errorf("expected log-size check to fail:\n%s", out)
+	}
+	if !strings.Contains(out, "huge.log") {
+		t.Errorf("expected oversized filename in detail:\n%s", out)
+	}
+}
+
+func TestDoctor_HFCacheSize_NotConfigured_OK(t *testing.T) {
+	d := healthyDoctorDeps(t)
+	// HFCacheDir left empty.
+	out, _, _ := runRoot(t, d, "doctor")
+	if strings.Contains(out, "✗ HuggingFace API cache size") {
+		t.Errorf("should pass when HFCacheDir is unset:\n%s", out)
+	}
+	if !strings.Contains(out, "HuggingFace API cache size") {
+		t.Errorf("expected hf cache size check in transcript:\n%s", out)
+	}
+}
+
+func TestDoctor_HFCacheSize_OK(t *testing.T) {
+	tmp := t.TempDir()
+	if err := os.WriteFile(filepath.Join(tmp, "small.json"), []byte("hi"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	d := healthyDoctorDeps(t)
+	d.HFCacheDir = tmp
+	out, _, _ := runRoot(t, d, "doctor")
+	if strings.Contains(out, "✗ HuggingFace API cache size") {
+		t.Errorf("should pass for under-limit cache:\n%s", out)
+	}
+}
+
+func TestDoctor_HFCacheSize_Oversized_Failure(t *testing.T) {
+	tmp := t.TempDir()
+	big := filepath.Join(tmp, "big.json")
+	// 501 MiB; safely past the 500 MiB threshold.
+	if err := os.WriteFile(big, make([]byte, (500<<20)+1), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	d := healthyDoctorDeps(t)
+	d.HFCacheDir = tmp
+	out, _, _ := runRoot(t, d, "doctor")
+	if !strings.Contains(out, "✗ HuggingFace API cache size") {
+		t.Errorf("expected hf cache size check to fail:\n%s", out)
+	}
+	if !strings.Contains(out, "cache prune") {
+		t.Errorf("expected remediation pointing at `cache prune`:\n%s", out)
 	}
 }
 

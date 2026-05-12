@@ -9,7 +9,6 @@ import (
 
 	"github.com/gregmundy/llamactl/internal/hardware"
 	"github.com/gregmundy/llamactl/internal/models"
-	"github.com/gregmundy/llamactl/internal/platform"
 	"github.com/gregmundy/llamactl/internal/server"
 )
 
@@ -44,17 +43,18 @@ var Recipes = map[string]Recipe{
 
 // FlagsFor assembles the llama-server argv. Inputs are read-only.
 // `caps.FlashAttnTristate` selects between modern `--flash-attn on` and
-// legacy bare-flag syntax.
+// legacy bare-flag syntax. `cores` is the host CPU core count (callers
+// typically pass platform.Default{}.Cores(); tests pass a fixed value).
 func FlagsFor(r Recipe, m models.Model, _ models.Quant, ggufPath string,
 	hw hardware.Info, ver server.Version, caps server.Capabilities,
-	sizeGB float64, port int) []string {
+	sizeGB float64, port int, cores int) []string {
 
 	ctxSize := r.CtxSize
 	if m.MaxCtx > 0 && m.MaxCtx < ctxSize {
 		ctxSize = m.MaxCtx
 	}
 
-	threads := platform.Default{}.Cores() - 2
+	threads := cores - 2
 	if threads < 1 {
 		threads = 1
 	}

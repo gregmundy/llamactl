@@ -54,6 +54,37 @@ func (c *Cache) Put(ns, key string, payload []byte) error {
 	return os.Rename(tmp, p)
 }
 
+// PruneOlderThan removes files under the cache root whose mtime is older
+// than d. Returns the count removed. Missing cache root is not an error.
+// Best-effort: per-entry errors are skipped; the walk continues.
+func (c *Cache) PruneOlderThan(d time.Duration) (int, error) {
+	cutoff := c.now().Add(-d)
+	removed := 0
+	err := filepath.WalkDir(c.root, func(p string, e fs.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return nil
+		}
+		if e.IsDir() {
+			return nil
+		}
+		info, ierr := e.Info()
+		if ierr != nil {
+			return nil
+		}
+		if info.ModTime().Before(cutoff) {
+			_ = os.Remove(p)
+			if _, statErr := os.Stat(p); os.IsNotExist(statErr) {
+				removed++
+			}
+		}
+		return nil
+	})
+	if err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return removed, err
+	}
+	return removed, nil
+}
+
 func (c *Cache) Get(ns, key string, ttl time.Duration) ([]byte, bool, error) {
 	data, err := os.ReadFile(c.path(ns, key))
 	if errors.Is(err, fs.ErrNotExist) {

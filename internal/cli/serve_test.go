@@ -66,6 +66,40 @@ func (f fakeProberPhase3) Capabilities(_ context.Context, _ string) (server.Capa
 	return f.Caps, nil
 }
 
+// The detached poll loop must honor ctx cancellation. Previously a bare
+// time.Sleep ignored SIGINT, so a launchd service that never reached PID>0
+// would hang for the full detachPollDeadline (5s). With select-on-ctx-or-timer,
+// canceling the parent context breaks the poll immediately.
+func TestRunServeDetachedHonorsCtxCancel(t *testing.T) {
+	d, ld, _ := makeServeDeps(t)
+	// Service never starts — Print always returns PID 0 (default).
+	ld.Services = map[string]launchd.ServiceInfo{}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	// Cancel shortly after we enter the poll loop.
+	time.AfterFunc(50*time.Millisecond, cancel)
+
+	start := time.Now()
+	err := runServeDetached(ctx, d, "qwen2.5-7b-instruct",
+		"/opt/homebrew/bin/llama-server", []string{"--port", "8080"},
+		8080, "balanced")
+	elapsed := time.Since(start)
+
+	if err == nil {
+		t.Fatalf("expected error from cancelled ctx, got nil")
+	}
+	// A bare time.Sleep loop would have pinned for the full 5s deadline.
+	// 1s is a generous upper bound that still proves we honored cancel.
+	if elapsed > 1*time.Second {
+		t.Fatalf("loop did not honor ctx cancel: took %s (expected <1s)", elapsed)
+	}
+	// Cause attribution: error chain must mention cancellation, not the
+	// "didn't start within" deadline message.
+	if !strings.Contains(err.Error(), context.Canceled.Error()) {
+		t.Errorf("err = %v, want it to mention context canceled", err)
+	}
+}
+
 func TestServeUnknownModel(t *testing.T) {
 	d, _, _ := makeServeDeps(t)
 	_, _, err := runRoot(t, d, "serve", "nope")
@@ -119,6 +153,26 @@ func TestServePortShiftLoggedToStderr(t *testing.T) {
 	}
 	if !strings.Contains(stderr, "8081") || !strings.Contains(stderr, "8080") {
 		t.Errorf("stderr should mention both ports; got: %q", stderr)
+	}
+}
+
+func TestServePortZeroEphemeralMessage(t *testing.T) {
+	d, ld, alloc := makeServeDeps(t)
+	alloc.Returns[0] = 51234
+	ld.Services["com.llamactl.qwen2.5-7b-instruct"] = launchd.ServiceInfo{
+		Label: "com.llamactl.qwen2.5-7b-instruct",
+		PID:   12345,
+		State: "running",
+	}
+	_, stderr, err := runRoot(t, d, "serve", "qwen2.5-7b-instruct", "--detach", "--port", "0")
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	if !strings.Contains(stderr, "bound to ephemeral :51234") {
+		t.Errorf("stderr should mention 'bound to ephemeral :51234'; got: %q", stderr)
+	}
+	if strings.Contains(stderr, ":0 was in use") {
+		t.Errorf("stderr must not say ':0 was in use'; got: %q", stderr)
 	}
 }
 

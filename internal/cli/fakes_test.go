@@ -2,6 +2,8 @@ package cli
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"io"
 	"os"
@@ -52,13 +54,22 @@ func (f *fakeHFClient) FetchRange(ctx context.Context, repoID, file string, off,
 // fakeDownloader writes the requested body directly (via fakeHFClient), so we
 // can assert "Downloader.Get was called" without exercising the real flock
 // machinery. The real Downloader is covered via httptest in T16.
+//
+// If the destination already exists with matching SHA, mimic the real
+// Downloader by setting req.WasAlreadyPresent and NOT recording the call as
+// a network fetch — so tests can distinguish "deduped" from "downloaded".
 type fakeDownloader struct {
 	HFClient *fakeHFClient
 	Calls    []download.Request
 }
 
-func (f *fakeDownloader) Get(ctx context.Context, req download.Request) error {
-	f.Calls = append(f.Calls, req)
+func (f *fakeDownloader) Get(ctx context.Context, req *download.Request) error {
+	// Mimic real dedupe: if dest exists with matching SHA, signal and return.
+	if existing, _ := sha256OfFile(req.DestPath); existing != "" && existing == req.ExpectedSHA256 {
+		req.WasAlreadyPresent = true
+		return nil
+	}
+	f.Calls = append(f.Calls, *req)
 	if f.HFClient == nil {
 		return nil
 	}
@@ -70,6 +81,22 @@ func (f *fakeDownloader) Get(ctx context.Context, req download.Request) error {
 		return err
 	}
 	return os.WriteFile(req.DestPath, body, 0o644)
+}
+
+// sha256OfFile is a small helper used by fakeDownloader to detect when the
+// destination is already present with the expected hash — mirroring the
+// real Downloader.Get dedupe behavior.
+func sha256OfFile(path string) (string, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return "", err
+	}
+	defer f.Close()
+	h := sha256.New()
+	if _, err := io.Copy(h, f); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(h.Sum(nil)), nil
 }
 
 // fakeHardwareDetector returns a pinned Info.

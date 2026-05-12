@@ -204,7 +204,8 @@ type Request struct {
     File           string
     DestPath       string // .../<model-id>/<quant>.gguf
     ExpectedSHA256 string // hex, from hf.Repo.siblings[].lfs.sha256
-    ProgressOut    io.Writer // nil disables progress
+    Progress       *Progress // optional state-bearing struct that tracks byte count + rate
+                             // (see internal/download/progress.go). Nil disables progress reporting.
 }
 ```
 

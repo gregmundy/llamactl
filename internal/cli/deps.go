@@ -43,7 +43,7 @@ type HFClient interface {
 
 // Downloader resolves a single Request → on-disk GGUF.
 type Downloader interface {
-	Get(ctx context.Context, req download.Request) error
+	Get(ctx context.Context, req *download.Request) error
 }
 
 // QuantSelector picks the best-fitting quant for a model on a host.

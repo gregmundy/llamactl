@@ -7,8 +7,10 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"net"
 	"os"
+	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
@@ -34,11 +36,14 @@ func newDoctorCmd(deps *Deps) *cobra.Command {
 
 // doctorCheck is one row in the doctor transcript. run returns (ok, detail);
 // detail is printed alongside the label whether ok or not. remediation is
-// printed only on failure.
+// printed only on failure. If remediationFn is non-nil it is consulted after
+// run() and its return value (when non-empty) overrides remediation — used
+// when the remediation depends on which failure branch fired.
 type doctorCheck struct {
-	label       string
-	remediation string
-	run         func(ctx context.Context, deps *Deps) (ok bool, detail string)
+	label         string
+	remediation   string
+	remediationFn func() string
+	run           func(ctx context.Context, deps *Deps) (ok bool, detail string)
 }
 
 func runDoctor(ctx context.Context, deps *Deps) error {
@@ -56,8 +61,16 @@ func runDoctor(ctx context.Context, deps *Deps) error {
 		} else {
 			fmt.Fprintf(deps.Stdout, "%s %s\n", mark, c.label)
 		}
-		if !ok && c.remediation != "" {
-			fmt.Fprintf(deps.Stdout, "    → %s\n", c.remediation)
+		if !ok {
+			rem := c.remediation
+			if c.remediationFn != nil {
+				if r := c.remediationFn(); r != "" {
+					rem = r
+				}
+			}
+			if rem != "" {
+				fmt.Fprintf(deps.Stdout, "    → %s\n", rem)
+			}
 		}
 	}
 	if fatal != "" {
@@ -88,8 +101,80 @@ func buildDoctorChecks(ctx context.Context, deps *Deps) ([]doctorCheck, string) 
 		diskSpaceCheck(deps),
 		tailscaleCheck(deps),
 		stalePlistsCheck(deps),
+		logFilesNotOversizedCheck(deps),
+		hfCacheSizeCheck(deps),
 	}
 	return checks, ""
+}
+
+// logFilesNotOversizedCheck flags any *.log under LogsDir that exceeds
+// 10 MiB. Rotation happens at serve-time, so this fires only when a
+// llama-server process has been running long enough to refill the file
+// past the threshold, or rotation has failed silently.
+func logFilesNotOversizedCheck(deps *Deps) doctorCheck {
+	return doctorCheck{
+		label:       "Log files within size limit (10 MiB)",
+		remediation: "rotate or remove oversized log: ls -lh " + deps.LogsDir,
+		run: func(_ context.Context, _ *Deps) (bool, string) {
+			if deps.LogsDir == "" {
+				return true, "(not configured)"
+			}
+			entries, err := os.ReadDir(deps.LogsDir)
+			if err != nil {
+				if os.IsNotExist(err) {
+					return true, "no logs directory yet"
+				}
+				return false, err.Error()
+			}
+			for _, e := range entries {
+				if e.IsDir() {
+					continue
+				}
+				info, err := e.Info()
+				if err != nil {
+					continue
+				}
+				if info.Size() > 10<<20 {
+					return false, fmt.Sprintf("%s exceeds 10 MiB", e.Name())
+				}
+			}
+			return true, ""
+		},
+	}
+}
+
+// hfCacheSizeCheck warns when the HF API response cache exceeds 500 MiB.
+// The Client also lazily prunes 30-day-stale entries on use; this check
+// catches cases where prune isn't enough or the user hasn't run a Search
+// recently.
+func hfCacheSizeCheck(d *Deps) doctorCheck {
+	return doctorCheck{
+		label:       "HuggingFace API cache size (<500 MiB)",
+		remediation: "run: llamactl cache prune",
+		run: func(_ context.Context, deps *Deps) (bool, string) {
+			if deps.HFCacheDir == "" {
+				return true, "(not configured)"
+			}
+			var total int64
+			err := filepath.WalkDir(deps.HFCacheDir, func(_ string, e fs.DirEntry, werr error) error {
+				if werr != nil || e.IsDir() {
+					return nil
+				}
+				info, ierr := e.Info()
+				if ierr == nil {
+					total += info.Size()
+				}
+				return nil
+			})
+			if err != nil && !os.IsNotExist(err) {
+				return false, err.Error()
+			}
+			if total > 500<<20 {
+				return false, fmt.Sprintf("cache is %d MiB", total>>20)
+			}
+			return true, ""
+		},
+	}
 }
 
 func bareMetalCheck(info hardware.Info, override bool) doctorCheck {
@@ -284,17 +369,34 @@ func orphanedMetadataCheck(deps *Deps) doctorCheck {
 }
 
 // diskSpaceCheck verifies at least 5 GiB is available in SharedModelsDir.
+//
+// If the directory itself is missing (fresh install before any `add`), Statfs
+// returns ENOENT and the right remediation is `mkdir -p`, not "free up space".
+// remediationFn closes over a flag set inside run() so the remediation line
+// matches the actual failure mode.
 func diskSpaceCheck(deps *Deps) doctorCheck {
+	var missingDir bool
 	return doctorCheck{
 		label:       "disk space",
 		remediation: "free up space in " + deps.SharedModelsDir + " (run `llamactl remove` or move large files)",
+		remediationFn: func() string {
+			if missingDir {
+				return fmt.Sprintf("create the models directory: mkdir -p %s", deps.SharedModelsDir)
+			}
+			return ""
+		},
 		run: func(_ context.Context, _ *Deps) (bool, string) {
+			missingDir = false
 			if deps.SharedModelsDir == "" {
 				return true, "(not configured)"
 			}
 			const minFreeGB = 5
 			var stat syscall.Statfs_t
 			if err := syscall.Statfs(deps.SharedModelsDir, &stat); err != nil {
+				if errors.Is(err, fs.ErrNotExist) || errors.Is(err, syscall.ENOENT) {
+					missingDir = true
+					return false, "models directory does not exist: " + deps.SharedModelsDir
+				}
 				return false, "statfs " + deps.SharedModelsDir + ": " + err.Error()
 			}
 			freeBytes := stat.Bavail * uint64(stat.Bsize)

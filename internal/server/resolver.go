@@ -12,6 +12,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 
 	"gopkg.in/yaml.v3"
 )
@@ -64,18 +65,44 @@ type CommandRunner interface {
 // Resolver finds llama-server using the PRD §4 priority order. All
 // dependencies are injectable so tests don't touch the real filesystem
 // outside their TempDir.
+//
+// Resolve memoizes successful resolutions; mu/cached are internal state.
+// Use a pointer (*Resolver) at call sites that need the cache to be
+// shared across calls (the production wiring does).
 type Resolver struct {
 	Getenv     func(string) string
 	LookPath   func(string) (string, error)
 	HomeDir    string // typically os.UserHomeDir() at startup
 	ConfigPath string // typically config.Paths{}.ConfigFile()
 	Runner     CommandRunner
+
+	mu     sync.Mutex
+	cached *Resolution
 }
 
 // Resolve walks the five-step discovery order and returns the first match.
 // A path counts as a match only if it points to an existing file (except for
 // LookPath, which already guarantees the file exists and is executable).
-func (r Resolver) Resolve(ctx context.Context) (Resolution, error) {
+//
+// Successful resolutions are cached; failed resolutions (ErrNotFound) are
+// not, so a transient install can be picked up on a later call. Mirrors
+// the Prober memoization pattern — doctor's resolvable + version-floor
+// checks each invoke Resolve and would otherwise pay 2x the discovery cost.
+func (r *Resolver) Resolve(ctx context.Context) (Resolution, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.cached != nil {
+		return *r.cached, nil
+	}
+	res, err := r.resolveUncached(ctx)
+	if err != nil {
+		return Resolution{}, err
+	}
+	r.cached = &res
+	return res, nil
+}
+
+func (r *Resolver) resolveUncached(ctx context.Context) (Resolution, error) {
 	// Step 1: LLAMACTL_LLAMA_SERVER_PATH env var
 	if p := r.Getenv("LLAMACTL_LLAMA_SERVER_PATH"); p != "" {
 		if exists(p) {
@@ -107,7 +134,7 @@ func (r Resolver) Resolve(ctx context.Context) (Resolution, error) {
 	return Resolution{}, ErrNotFound
 }
 
-func (r Resolver) fromConfig() string {
+func (r *Resolver) fromConfig() string {
 	b, err := os.ReadFile(r.ConfigPath)
 	if err != nil {
 		return ""
@@ -121,7 +148,7 @@ func (r Resolver) fromConfig() string {
 	return doc.LlamaServerPath
 }
 
-func (r Resolver) fromBrew(ctx context.Context) (string, bool) {
+func (r *Resolver) fromBrew(ctx context.Context) (string, bool) {
 	var stdout bytes.Buffer
 	if err := r.Runner.Run(ctx, "brew", []string{"--prefix", "llama.cpp"}, "", &stdout, io.Discard); err != nil {
 		return "", false

@@ -16,9 +16,10 @@ import (
 var ErrProcessNotFound = errors.New("process not found")
 
 // CommandRunner is the subprocess seam, locally redeclared (same
-// pattern as internal/hardware/internal/server).
+// pattern as internal/hardware/internal/server). dir is the working
+// directory ("" = inherit cwd). Mirrors runner.CommandRunner.
 type CommandRunner interface {
-	Run(ctx context.Context, name string, args []string, stdin string, stdout, stderr io.Writer) error
+	Run(ctx context.Context, name string, args []string, dir string, stdout, stderr io.Writer) error
 }
 
 // Inspector queries the kernel about a running pid via `ps`.
@@ -74,12 +75,24 @@ func parseEtime(s string) (time.Duration, error) {
 	var h, m, sec int
 	switch len(parts) {
 	case 2:
-		m, _ = strconv.Atoi(parts[0])
-		sec, _ = strconv.Atoi(parts[1])
+		var err error
+		if m, err = strconv.Atoi(parts[0]); err != nil {
+			return 0, fmt.Errorf("parse etime %q: %w", s, err)
+		}
+		if sec, err = strconv.Atoi(parts[1]); err != nil {
+			return 0, fmt.Errorf("parse etime %q: %w", s, err)
+		}
 	case 3:
-		h, _ = strconv.Atoi(parts[0])
-		m, _ = strconv.Atoi(parts[1])
-		sec, _ = strconv.Atoi(parts[2])
+		var err error
+		if h, err = strconv.Atoi(parts[0]); err != nil {
+			return 0, fmt.Errorf("parse etime %q: %w", s, err)
+		}
+		if m, err = strconv.Atoi(parts[1]); err != nil {
+			return 0, fmt.Errorf("parse etime %q: %w", s, err)
+		}
+		if sec, err = strconv.Atoi(parts[2]); err != nil {
+			return 0, fmt.Errorf("parse etime %q: %w", s, err)
+		}
 	default:
 		return 0, fmt.Errorf("parse etime %q: unexpected format", s)
 	}

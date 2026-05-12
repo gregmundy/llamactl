@@ -2,12 +2,9 @@ package cli
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"io/fs"
 	"os"
 	"path"
@@ -124,20 +121,19 @@ func finishAdd(ctx context.Context, d *Deps, id, repoID string, quant models.Qua
 	destDir := filepath.Join(d.SharedModelsDir, id)
 	destPath := filepath.Join(destDir, string(quant)+".gguf")
 
-	if existing, _ := sha256OfFileIfExists(destPath); existing == expectedSHA {
+	req := download.Request{
+		RepoID:         repoID,
+		File:           file,
+		DestPath:       destPath,
+		ExpectedSHA256: expectedSHA,
+		TotalSize:      totalSize,
+		Progress:       newProgress(d, totalSize),
+	}
+	if err := d.Downloader.Get(ctx, &req); err != nil {
+		return fmt.Errorf("download: %w", err)
+	}
+	if req.WasAlreadyPresent {
 		fmt.Fprintf(d.Stdout, "already present (matched SHA): %s\n", destPath)
-	} else {
-		req := download.Request{
-			RepoID:         repoID,
-			File:           file,
-			DestPath:       destPath,
-			ExpectedSHA256: expectedSHA,
-			TotalSize:      totalSize,
-			Progress:       newProgress(d, totalSize),
-		}
-		if err := d.Downloader.Get(ctx, req); err != nil {
-			return fmt.Errorf("download: %w", err)
-		}
 	}
 
 	// HF-path mode: read GGUF header to capture ParamsB/Arch.
@@ -172,8 +168,10 @@ func finishAdd(ctx context.Context, d *Deps, id, repoID string, quant models.Qua
 	if err := d.ModelStore.Put(ctx, meta); err != nil {
 		return fmt.Errorf("write metadata: %w", err)
 	}
-	fmt.Fprintf(d.Stdout, "installed %s (%s, %s) -> %s\n",
-		id, quant, humanFileSize(totalSize), destPath)
+	if !req.WasAlreadyPresent {
+		fmt.Fprintf(d.Stdout, "installed %s (%s, %s) -> %s\n",
+			id, quant, humanFileSize(totalSize), destPath)
+	}
 	return nil
 }
 
@@ -247,19 +245,6 @@ func knownQuantsList() string {
 		out = append(out, string(q))
 	}
 	return strings.Join(out, ", ")
-}
-
-func sha256OfFileIfExists(path string) (string, error) {
-	f, err := os.Open(path)
-	if err != nil {
-		return "", err
-	}
-	defer f.Close()
-	h := sha256.New()
-	if _, err := io.Copy(h, f); err != nil {
-		return "", err
-	}
-	return hex.EncodeToString(h.Sum(nil)), nil
 }
 
 func humanFileSize(n int64) string {

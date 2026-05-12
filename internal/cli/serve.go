@@ -13,6 +13,7 @@ import (
 
 	"github.com/gregmundy/llamactl/internal/launchd"
 	"github.com/gregmundy/llamactl/internal/models"
+	"github.com/gregmundy/llamactl/internal/platform"
 	"github.com/gregmundy/llamactl/internal/recipes"
 	"github.com/gregmundy/llamactl/internal/server"
 	"github.com/spf13/cobra"
@@ -88,11 +89,14 @@ func runServe(ctx context.Context, d *Deps, id string, requestedPort int, recipe
 	if err != nil {
 		return fmt.Errorf("%w: %v", ErrUserError, err)
 	}
-	if chosen != requestedPort {
+	switch {
+	case requestedPort == 0:
+		fmt.Fprintf(d.Stderr, "bound to ephemeral :%d\n", chosen)
+	case chosen != requestedPort:
 		fmt.Fprintf(d.Stderr, "bound to :%d (:%d was in use)\n", chosen, requestedPort)
 	}
 
-	argv := recipes.FlagsFor(recipe, model, meta.Quant, meta.GGUFPath, hw, ver, caps, sizeGB, chosen)
+	argv := recipes.FlagsFor(recipe, model, meta.Quant, meta.GGUFPath, hw, ver, caps, sizeGB, chosen, platform.Default{}.Cores())
 
 	// Update metadata.LastServedAt before launching. If launch fails the
 	// timestamp is slightly inaccurate; acceptable for v1.
@@ -126,6 +130,10 @@ func runServeForeground(ctx context.Context, d *Deps, id, llamaServer string, ar
 		return fmt.Errorf("mkdir logs: %w", err)
 	}
 	logPath := filepath.Join(d.LogsDir, id+".log")
+	if _, err := RotateIfLarge(logPath, 10<<20, 3); err != nil {
+		fmt.Fprintf(d.Stderr, "llamactl: warning: log rotation failed: %v\n", err)
+		// Continue: serving > rotation hygiene.
+	}
 	logFile, err := os.OpenFile(logPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
 	if err != nil {
 		return fmt.Errorf("open log %s: %w", logPath, err)
@@ -153,6 +161,10 @@ func runServeDetached(ctx context.Context, d *Deps, id, llamaServer string, argv
 		return fmt.Errorf("mkdir Logs: %w", err)
 	}
 	logPath := filepath.Join(d.LogsDir, id+".log")
+	if _, err := RotateIfLarge(logPath, 10<<20, 3); err != nil {
+		fmt.Fprintf(d.Stderr, "llamactl: warning: log rotation failed: %v\n", err)
+		// Continue: serving > rotation hygiene.
+	}
 	plistPath := filepath.Join(d.LaunchAgentsDir, label+".plist")
 
 	home, err := os.UserHomeDir()
@@ -209,6 +221,12 @@ func runServeDetached(ctx context.Context, d *Deps, id, llamaServer string, argv
 			return fmt.Errorf("%w: service didn't start within %s; see %s",
 				ErrUserError, detachPollDeadline, logPath)
 		}
-		time.Sleep(detachPollInterval)
+		// select-on-ctx-or-timer instead of bare time.Sleep so SIGINT
+		// (and any other ctx cancellation) breaks the poll immediately.
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(detachPollInterval):
+		}
 	}
 }
