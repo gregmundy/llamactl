@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/gregmundy/llamactl/internal/gguftest"
 	"github.com/gregmundy/llamactl/internal/models"
 )
 
@@ -175,5 +176,63 @@ func TestListShowsQuestionMarkForUnknownParams(t *testing.T) {
 	}
 	if !strings.Contains(out, "?") {
 		t.Errorf("expected '?' for unknown params:\n%s", out)
+	}
+}
+
+func TestListSelfHealsZeroParamsB(t *testing.T) {
+	tempDir := t.TempDir()
+	ggufPath := filepath.Join(tempDir, "test", "Q5_K_M.gguf")
+	if err := os.MkdirAll(filepath.Dir(ggufPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// Build a real GGUF with parameter_count + architecture.
+	ggufBytes := gguftest.Build(t, 3,
+		gguftest.KV{Key: "general.architecture", Type: gguftest.TypeString, Value: "qwen3"},
+		gguftest.KV{Key: "general.size_label", Type: gguftest.TypeString, Value: "3.4B"},
+	)
+	if err := os.WriteFile(ggufPath, ggufBytes, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	store := newFakeModelStore()
+	_ = store.Put(context.Background(), models.Metadata{
+		ID:        "qwen3-3b-stale",
+		Quant:     models.Q5_K_M,
+		GGUFPath:  ggufPath,
+		SizeBytes: int64(len(ggufBytes)),
+		AddedAt:   time.Date(2026, 5, 1, 0, 0, 0, 0, time.UTC),
+		// ParamsB == 0 and Arch == "" — simulates stale pre-Phase-5 metadata.
+	})
+
+	d := &Deps{ModelStore: store, FS: OSFileSystem{}}
+	out, _, err := runRoot(t, d, "list")
+	if err != nil {
+		t.Fatalf("list err: %v", err)
+	}
+
+	// After self-heal the PARAMS column should show a non-? value.
+	// tabwriter separates columns with spaces; look for "?" surrounded by spaces.
+	for _, line := range strings.Split(out, "\n") {
+		if strings.Contains(line, "qwen3-3b-stale") {
+			fields := strings.Fields(line)
+			paramsField := ""
+			// PARAMS is the 3rd column (index 2): MODEL-ID QUANT PARAMS SIZE PATH ADDED LAST-SERVED
+			if len(fields) >= 3 {
+				paramsField = fields[2]
+			}
+			if paramsField == "?" {
+				t.Errorf("PARAMS column should be healed (not '?'); line: %q", line)
+			}
+			break
+		}
+	}
+
+	// The store record should now have ParamsB != 0.
+	list, listErr := store.List(context.Background())
+	if listErr != nil {
+		t.Fatalf("store.List: %v", listErr)
+	}
+	if len(list) == 0 || list[0].ParamsB == 0 {
+		t.Errorf("store record ParamsB should be healed; got ParamsB=%v", list[0].ParamsB)
 	}
 }
