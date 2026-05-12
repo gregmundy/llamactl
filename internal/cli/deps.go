@@ -134,10 +134,11 @@ type Deps struct {
 	LaunchAgentsDir string // ~/Library/LaunchAgents
 	LogsDir         string // ~/Library/Logs/llamactl
 
-	LookPath func(name string) (string, error)
-	Getenv   func(key string) string
-	Now      func() time.Time
-	Sleep    func(d time.Duration) <-chan time.Time
+	LookPath    func(name string) (string, error)
+	Getenv      func(key string) string
+	Now         func() time.Time
+	Sleep       func(d time.Duration) <-chan time.Time
+	UserHomeDir func() (string, error)
 }
 
 // OSFileSystem is the production FileSystem backed by package os.

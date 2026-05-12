@@ -286,6 +286,36 @@ func TestServeUpdatesLastServedAt(t *testing.T) {
 // (Now returns t0 then t0+10s) and an always-closed Sleep channel, the
 // function must return a deadline error quickly — not hang waiting for a
 // real 250ms timer.
+// TestServeDetachedUsesInjectedUserHomeDir verifies that runServeDetached uses
+// Deps.UserHomeDir (when non-nil) to populate the plist WorkingDirectory,
+// rather than calling os.UserHomeDir() directly. This lets tests point the
+// plist's WorkingDirectory at a tempDir-rooted fake home.
+func TestServeDetachedUsesInjectedUserHomeDir(t *testing.T) {
+	d, ld, _ := makeServeDeps(t)
+	tempHome := t.TempDir()
+	d.UserHomeDir = func() (string, error) { return tempHome, nil }
+
+	ld.Services["com.llamactl.qwen2.5-7b-instruct"] = launchd.ServiceInfo{
+		Label: "com.llamactl.qwen2.5-7b-instruct",
+		PID:   12345,
+		State: "running",
+	}
+
+	_, _, err := runRoot(t, d, "serve", "qwen2.5-7b-instruct", "--detach")
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+
+	plistPath := filepath.Join(d.LaunchAgentsDir, "com.llamactl.qwen2.5-7b-instruct.plist")
+	data, readErr := os.ReadFile(plistPath)
+	if readErr != nil {
+		t.Fatalf("could not read plist: %v", readErr)
+	}
+	if !strings.Contains(string(data), tempHome) {
+		t.Errorf("plist WorkingDirectory should contain injected tempHome %q; plist:\n%s", tempHome, data)
+	}
+}
+
 func TestRunServeDetachedSleepSeam(t *testing.T) {
 	d, _, _ := makeServeDeps(t)
 

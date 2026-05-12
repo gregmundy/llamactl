@@ -52,6 +52,7 @@ func main() {
 		Getenv:           os.Getenv,
 		Now:              time.Now,
 		Sleep:            time.After,
+		UserHomeDir:      os.UserHomeDir,
 	}
 
 	// Phase 2: wire HFClient, Downloader, QuantSelector, ModelStore

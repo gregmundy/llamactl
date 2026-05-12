@@ -188,7 +188,11 @@ func runServeDetached(ctx context.Context, d *Deps, id, llamaServer string, argv
 	}
 	plistPath := filepath.Join(d.LaunchAgentsDir, label+".plist")
 
-	home, err := os.UserHomeDir()
+	userHomeDir := os.UserHomeDir
+	if d.UserHomeDir != nil {
+		userHomeDir = d.UserHomeDir
+	}
+	home, err := userHomeDir()
 	if err != nil {
 		return fmt.Errorf("home dir: %w", err)
 	}
