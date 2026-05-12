@@ -88,7 +88,10 @@ func runServe(ctx context.Context, d *Deps, id string, requestedPort int, recipe
 	if err != nil {
 		return fmt.Errorf("%w: %v", ErrUserError, err)
 	}
-	if chosen != requestedPort {
+	switch {
+	case requestedPort == 0:
+		fmt.Fprintf(d.Stderr, "bound to ephemeral :%d\n", chosen)
+	case chosen != requestedPort:
 		fmt.Fprintf(d.Stderr, "bound to :%d (:%d was in use)\n", chosen, requestedPort)
 	}
 

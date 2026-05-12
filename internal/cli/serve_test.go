@@ -122,6 +122,26 @@ func TestServePortShiftLoggedToStderr(t *testing.T) {
 	}
 }
 
+func TestServePortZeroEphemeralMessage(t *testing.T) {
+	d, ld, alloc := makeServeDeps(t)
+	alloc.Returns[0] = 51234
+	ld.Services["com.llamactl.qwen2.5-7b-instruct"] = launchd.ServiceInfo{
+		Label: "com.llamactl.qwen2.5-7b-instruct",
+		PID:   12345,
+		State: "running",
+	}
+	_, stderr, err := runRoot(t, d, "serve", "qwen2.5-7b-instruct", "--detach", "--port", "0")
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	if !strings.Contains(stderr, "bound to ephemeral :51234") {
+		t.Errorf("stderr should mention 'bound to ephemeral :51234'; got: %q", stderr)
+	}
+	if strings.Contains(stderr, ":0 was in use") {
+		t.Errorf("stderr must not say ':0 was in use'; got: %q", stderr)
+	}
+}
+
 func TestServeDetachedBootsOutExistingService(t *testing.T) {
 	d, ld, _ := makeServeDeps(t)
 	// Initial Print: service already running. After Bootout it's "stopped".
