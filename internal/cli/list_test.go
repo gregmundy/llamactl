@@ -135,11 +135,11 @@ func TestListShowsQuestionMarkForUnknownParams(t *testing.T) {
 	}
 	store := newFakeModelStore()
 	_ = store.Put(context.Background(), models.Metadata{
-		ID:       "no-params",
-		Quant:    models.Q4_K_M,
-		GGUFPath: existing,
+		ID:        "no-params",
+		Quant:     models.Q4_K_M,
+		GGUFPath:  existing,
 		SizeBytes: 3,
-		AddedAt:  time.Date(2026, 5, 11, 0, 0, 0, 0, time.UTC),
+		AddedAt:   time.Date(2026, 5, 11, 0, 0, 0, 0, time.UTC),
 		// ParamsB intentionally zero — simulates an HF-path add where the
 		// GGUF parser couldn't determine param count.
 	})

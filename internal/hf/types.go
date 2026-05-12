@@ -5,7 +5,7 @@ package hf
 
 // SearchHit is a HuggingFace /api/models?search=... entry.
 type SearchHit struct {
-	ID           string `json:"id"`        // e.g. "Qwen/Qwen2.5-7B-Instruct-GGUF"
+	ID           string `json:"id"` // e.g. "Qwen/Qwen2.5-7B-Instruct-GGUF"
 	Downloads    int    `json:"downloads"`
 	Likes        int    `json:"likes"`
 	LastModified string `json:"lastModified"`

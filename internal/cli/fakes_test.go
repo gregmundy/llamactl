@@ -118,8 +118,8 @@ func (s *fakeModelStore) Delete(_ context.Context, id string) error {
 // --- Phase 3 fakes ---
 
 type fakeLaunchdService struct {
-	Loaded     []string // plist paths passed to Load
-	Booted     []string // labels passed to Bootout
+	Loaded     []string                       // plist paths passed to Load
+	Booted     []string                       // labels passed to Bootout
 	Services   map[string]launchd.ServiceInfo // by label
 	ListResult []launchd.ServiceInfo
 	LoadErr    error

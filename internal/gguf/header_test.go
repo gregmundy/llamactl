@@ -152,9 +152,9 @@ func TestReadHeaderSkipsArrayValues(t *testing.T) {
 	writeKVString(t, &buf, "general.architecture", "llama")
 	// 2. tokenizer.ggml.tokens = ["a", "b", "c"]  (an array of strings)
 	writeKey(t, &buf, "tokenizer.ggml.tokens")
-	must(t, binary.Write(&buf, binary.LittleEndian, uint32(9)))   // array type
-	must(t, binary.Write(&buf, binary.LittleEndian, uint32(8)))   // elem type = string
-	must(t, binary.Write(&buf, binary.LittleEndian, uint64(3)))   // arrayLen
+	must(t, binary.Write(&buf, binary.LittleEndian, uint32(9))) // array type
+	must(t, binary.Write(&buf, binary.LittleEndian, uint32(8))) // elem type = string
+	must(t, binary.Write(&buf, binary.LittleEndian, uint64(3))) // arrayLen
 	for _, s := range []string{"a", "b", "c"} {
 		must(t, binary.Write(&buf, binary.LittleEndian, uint64(len(s))))
 		buf.WriteString(s)

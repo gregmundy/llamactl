@@ -3,7 +3,8 @@
 // model in `llamactl list` shows blank PARAMS.
 //
 // Usage:
-//   go run ./cmd/gguf-inspect <path-to-gguf>
+//
+//	go run ./cmd/gguf-inspect <path-to-gguf>
 package main
 
 import (

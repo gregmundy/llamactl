@@ -216,17 +216,17 @@ func TestIntegrationPhase25AddHFPath(t *testing.T) {
 	// Build a synthetic GGUF body that the real gguf.ReadHeader will parse.
 	var ggufBuf bytes.Buffer
 	ggufBuf.WriteString("GGUF")
-	binary.Write(&ggufBuf, binary.LittleEndian, uint32(3))                       // version
-	binary.Write(&ggufBuf, binary.LittleEndian, uint64(0))                       // tensor_count
-	binary.Write(&ggufBuf, binary.LittleEndian, uint64(2))                       // kv_count
+	binary.Write(&ggufBuf, binary.LittleEndian, uint32(3)) // version
+	binary.Write(&ggufBuf, binary.LittleEndian, uint64(0)) // tensor_count
+	binary.Write(&ggufBuf, binary.LittleEndian, uint64(2)) // kv_count
 	binary.Write(&ggufBuf, binary.LittleEndian, uint64(len("general.architecture")))
 	ggufBuf.WriteString("general.architecture")
-	binary.Write(&ggufBuf, binary.LittleEndian, uint32(8))                       // string type
+	binary.Write(&ggufBuf, binary.LittleEndian, uint32(8)) // string type
 	binary.Write(&ggufBuf, binary.LittleEndian, uint64(len("qwen3")))
 	ggufBuf.WriteString("qwen3")
 	binary.Write(&ggufBuf, binary.LittleEndian, uint64(len("general.parameter_count")))
 	ggufBuf.WriteString("general.parameter_count")
-	binary.Write(&ggufBuf, binary.LittleEndian, uint32(10))                      // u64 type
+	binary.Write(&ggufBuf, binary.LittleEndian, uint32(10)) // u64 type
 	binary.Write(&ggufBuf, binary.LittleEndian, uint64(8030000000))
 	body := ggufBuf.Bytes()
 	sum := sha256.Sum256(body)
