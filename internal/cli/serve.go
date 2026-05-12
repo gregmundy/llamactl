@@ -212,6 +212,12 @@ func runServeDetached(ctx context.Context, d *Deps, id, llamaServer string, argv
 			return fmt.Errorf("%w: service didn't start within %s; see %s",
 				ErrUserError, detachPollDeadline, logPath)
 		}
-		time.Sleep(detachPollInterval)
+		// select-on-ctx-or-timer instead of bare time.Sleep so SIGINT
+		// (and any other ctx cancellation) breaks the poll immediately.
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(detachPollInterval):
+		}
 	}
 }
