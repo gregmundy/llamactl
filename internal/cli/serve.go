@@ -112,8 +112,6 @@ func runServe(ctx context.Context, d *Deps, id string, requestedPort int, recipe
 			fmt.Fprintf(d.Stderr, "llamactl: warning: %s\n", verdict.Reason)
 		}
 	}
-	_ = draftMeta // used by Task 11 (avoids "declared and not used" while Task 11 hasn't shipped)
-	_ = verdict
 
 	// Build the skip list of ports already claimed by sibling
 	// com.llamactl.* services. Without this, two `serve --detach`
@@ -158,6 +156,28 @@ func runServe(ctx context.Context, d *Deps, id string, requestedPort int, recipe
 	}
 	if apiKey != "" {
 		argv = append(argv, "--api-key", apiKey)
+	}
+
+	// Phase 6b: append speculative-decoding args when --draft was set + validated.
+	if hasDraft {
+		// Draft ctx capped at min(main ctx, draft.MaxCtx). model.MaxCtx is the
+		// main model's training ctx; 0 means "no cap known" — fall back to a
+		// generic 8192 (matching the chat recipe's default).
+		mainCtx := model.MaxCtx
+		if mainCtx == 0 {
+			mainCtx = 8192
+		}
+		draftCtx := lookupMaxCtx(draftMeta)
+		if draftCtx == 0 || draftCtx > mainCtx {
+			draftCtx = mainCtx
+		}
+		argv = append(argv, "--model-draft", draftMeta.GGUFPath)
+		argv = append(argv, "--ctx-size-draft", fmt.Sprintf("%d", draftCtx))
+	}
+
+	if hasDraft {
+		fmt.Fprintf(d.Stdout, "speculative decoding enabled (draft=%s, ratio=%.1f×)\n",
+			draftMeta.ID, verdict.SizeRatio)
 	}
 
 	// Update metadata.LastServedAt before launching. If launch fails the
