@@ -236,3 +236,70 @@ func TestListSelfHealsZeroParamsB(t *testing.T) {
 		t.Errorf("store record ParamsB should be healed; got ParamsB=%v", list[0].ParamsB)
 	}
 }
+
+func TestListSelfHealsViaTensorShape(t *testing.T) {
+	tempDir := t.TempDir()
+	ggufPath := filepath.Join(tempDir, "test", "Q4_K_M.gguf")
+	if err := os.MkdirAll(filepath.Dir(ggufPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// Build a synthetic GGUF: arch=qwen2, no parameter_count, no size_label,
+	// but with a token_embd.weight tensor descriptor (3584 x 152064 = Qwen2.5-7B dims).
+	ggufBytes := gguftest.BuildWithTensors(t, 3,
+		[]gguftest.Tensor{
+			{Name: "token_embd.weight", Dims: []uint64{3584, 152064}, Type: 0, Offset: 0},
+		},
+		gguftest.KV{Key: "general.architecture", Type: gguftest.TypeString, Value: "qwen2"},
+		gguftest.KV{Key: "qwen2.block_count", Type: gguftest.TypeU32, Value: uint32(28)},
+	)
+	if err := os.WriteFile(ggufPath, ggufBytes, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	store := newFakeModelStore()
+	_ = store.Put(context.Background(), models.Metadata{
+		ID:        "qwen2-7b-tensor-heal",
+		Quant:     models.Q4_K_M,
+		GGUFPath:  ggufPath,
+		SizeBytes: int64(len(ggufBytes)),
+		AddedAt:   time.Date(2026, 5, 1, 0, 0, 0, 0, time.UTC),
+		// ParamsB == 0 and Arch == "" — no parameter_count and no size_label in GGUF.
+	})
+
+	d := &Deps{ModelStore: store, FS: OSFileSystem{}}
+	out, _, err := runRoot(t, d, "list")
+	if err != nil {
+		t.Fatalf("list err: %v", err)
+	}
+
+	// After self-heal the PARAMS column should show a non-? value.
+	for _, line := range strings.Split(out, "\n") {
+		if strings.Contains(line, "qwen2-7b-tensor-heal") {
+			fields := strings.Fields(line)
+			paramsField := ""
+			// PARAMS is the 3rd column (index 2): MODEL-ID QUANT PARAMS SIZE PATH ADDED LAST-SERVED
+			if len(fields) >= 3 {
+				paramsField = fields[2]
+			}
+			if paramsField == "?" {
+				t.Errorf("PARAMS column should be healed via tensor-shape (not '?'); line: %q", line)
+			}
+			break
+		}
+	}
+
+	// The store record should now have ParamsB in [6.5, 9.0].
+	// qwen2Params(3584, 152064, 28) ≈ 7.62 B for Qwen2.5-7B dims.
+	list, listErr := store.List(context.Background())
+	if listErr != nil {
+		t.Fatalf("store.List: %v", listErr)
+	}
+	if len(list) == 0 {
+		t.Fatal("store is empty after self-heal")
+	}
+	healed := list[0]
+	if healed.ParamsB < 6.5 || healed.ParamsB > 9.0 {
+		t.Errorf("healed ParamsB should be in [6.5, 9.0] B; got %v", healed.ParamsB)
+	}
+	t.Logf("healed ParamsB = %.4f B", healed.ParamsB)
+}
