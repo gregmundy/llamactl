@@ -1,6 +1,10 @@
 // Package gguftest builds synthetic GGUF byte streams for unit tests.
 // Mirrors the layout in internal/gguf/header.go: magic("GGUF") + version(u32)
 // + tensor_count(u64) + kv_count(u64) + N×{key_string, type_u32, value}.
+//
+// All writes target *bytes.Buffer, whose Write method is documented to never
+// return an error; binary.Write therefore cannot fail here. We drop the error
+// checks accordingly to keep this test helper concise.
 package gguftest
 
 import (
@@ -11,20 +15,15 @@ import (
 )
 
 // GGUF value type codes (subset). Source: GGUF v3 spec.
+// Only the codes writeValue actually serializes are exported.
 const (
-	TypeU8     uint32 = 0
-	TypeI8     uint32 = 1
-	TypeU16    uint32 = 2
-	TypeI16    uint32 = 3
 	TypeU32    uint32 = 4
 	TypeI32    uint32 = 5
-	TypeF32    uint32 = 6
 	TypeBool   uint32 = 7
 	TypeString uint32 = 8
 	TypeArray  uint32 = 9
 	TypeU64    uint32 = 10
 	TypeI64    uint32 = 11
-	TypeF64    uint32 = 12
 )
 
 // KV is a single GGUF metadata entry.
@@ -52,20 +51,12 @@ func Build(t *testing.T, version uint32, kvs ...KV) []byte {
 	t.Helper()
 	var buf bytes.Buffer
 	buf.WriteString("GGUF")
-	if err := binary.Write(&buf, binary.LittleEndian, version); err != nil {
-		t.Fatalf("gguftest.Build: write version: %v", err)
-	}
-	if err := binary.Write(&buf, binary.LittleEndian, uint64(0)); err != nil { // tensor_count
-		t.Fatalf("gguftest.Build: write tensor_count: %v", err)
-	}
-	if err := binary.Write(&buf, binary.LittleEndian, uint64(len(kvs))); err != nil {
-		t.Fatalf("gguftest.Build: write kv_count: %v", err)
-	}
+	binary.Write(&buf, binary.LittleEndian, version)
+	binary.Write(&buf, binary.LittleEndian, uint64(0)) // tensor_count
+	binary.Write(&buf, binary.LittleEndian, uint64(len(kvs)))
 	for _, kv := range kvs {
 		writeString(&buf, kv.Key)
-		if err := binary.Write(&buf, binary.LittleEndian, kv.Type); err != nil {
-			t.Fatalf("gguftest.Build: key=%q: write type: %v", kv.Key, err)
-		}
+		binary.Write(&buf, binary.LittleEndian, kv.Type)
 		if kv.RawTypeOnly {
 			continue
 		}
@@ -90,30 +81,26 @@ func writeValue(w *bytes.Buffer, kind uint32, v any) error {
 		}
 		writeString(w, s)
 	case TypeU32:
-		return binary.Write(w, binary.LittleEndian, v.(uint32))
+		binary.Write(w, binary.LittleEndian, v.(uint32))
 	case TypeU64:
-		return binary.Write(w, binary.LittleEndian, v.(uint64))
+		binary.Write(w, binary.LittleEndian, v.(uint64))
 	case TypeI64:
-		return binary.Write(w, binary.LittleEndian, v.(int64))
+		binary.Write(w, binary.LittleEndian, v.(int64))
 	case TypeI32:
-		return binary.Write(w, binary.LittleEndian, v.(int32))
+		binary.Write(w, binary.LittleEndian, v.(int32))
 	case TypeBool:
 		var b uint8
 		if v.(bool) {
 			b = 1
 		}
-		return binary.Write(w, binary.LittleEndian, b)
+		binary.Write(w, binary.LittleEndian, b)
 	case TypeArray:
 		av, ok := v.(ArrayValue)
 		if !ok {
 			return fmt.Errorf("gguftest: TypeArray value must be ArrayValue, got %T", v)
 		}
-		if err := binary.Write(w, binary.LittleEndian, av.ElemType); err != nil {
-			return err
-		}
-		if err := binary.Write(w, binary.LittleEndian, uint64(len(av.Items))); err != nil {
-			return err
-		}
+		binary.Write(w, binary.LittleEndian, av.ElemType)
+		binary.Write(w, binary.LittleEndian, uint64(len(av.Items)))
 		for _, item := range av.Items {
 			if err := writeValue(w, av.ElemType, item); err != nil {
 				return err
