@@ -97,6 +97,33 @@ func HasPublicBind(dir, label string) bool {
 	return host != "127.0.0.1" && host != "::1" && host != "localhost"
 }
 
+// HasDraft returns the path embedded in the plist's --model-draft arg, if
+// any. Returns ("", false) when the plist is missing, the flag is absent,
+// or the value <string> can't be parsed. Mirrors the scanning pattern of
+// HasAPIKey / HasPublicBind.
+func HasDraft(dir, label string) (string, bool) {
+	data, err := os.ReadFile(filepath.Join(dir, label+".plist"))
+	if err != nil {
+		return "", false
+	}
+	s := string(data)
+	idx := strings.Index(s, "<string>--model-draft</string>")
+	if idx < 0 {
+		return "", false
+	}
+	rest := s[idx+len("<string>--model-draft</string>"):]
+	open := strings.Index(rest, "<string>")
+	if open < 0 {
+		return "", false
+	}
+	rest = rest[open+len("<string>"):]
+	closeIdx := strings.Index(rest, "</string>")
+	if closeIdx < 0 {
+		return "", false
+	}
+	return strings.TrimSpace(rest[:closeIdx]), true
+}
+
 // extractPortArg finds the value of `--port N` inside the plist's
 // ProgramArguments. The plist template emits each arg as a <string>
 // element; we scan for `<string>--port</string>` and read the next
