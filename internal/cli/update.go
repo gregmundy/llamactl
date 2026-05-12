@@ -49,6 +49,13 @@ func runUpdate(ctx context.Context, d *Deps, currentVersion string, refresh bool
 		return fmt.Errorf("fetch latest version: %w", err)
 	}
 
+	if currentVersion == "dev" || currentVersion == "" {
+		fmt.Fprintln(d.Stdout, "current: dev (local build)")
+		fmt.Fprintf(d.Stdout, "latest:  %s\n", normalizeWithV(latest))
+		fmt.Fprintln(d.Stdout, "dev builds don't auto-update; install via brew or `go install ...@latest`")
+		return nil
+	}
+
 	if !updateAvailable(currentVersion, latest) {
 		fmt.Fprintf(d.Stdout, "already on latest (%s)\n", currentVersion)
 		return nil

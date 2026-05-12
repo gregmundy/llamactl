@@ -717,3 +717,20 @@ func TestLatestVersionCheckStaleCache(t *testing.T) {
 		t.Fatalf("missing 'stale': %q", detail)
 	}
 }
+
+func TestLatestVersionCheckSkipsDevBuild(t *testing.T) {
+	// Even if a cache file exists with a newer version, a dev build should
+	// short-circuit before reading the cache.
+	tempDir := t.TempDir()
+	raw, _ := json.Marshal(versionCache{Latest: "1.4.0", CheckedAt: time.Now()})
+	os.WriteFile(filepath.Join(tempDir, "last-version-check.json"), raw, 0o644)
+	deps := &Deps{HFCacheDir: tempDir, LlamactlVersion: "dev", Now: time.Now}
+	check := latestVersionCheck(deps)
+	ok, detail := check.run(context.Background(), deps)
+	if !ok {
+		t.Fatal("expected ok=true for dev build")
+	}
+	if !strings.Contains(detail, "dev build") {
+		t.Fatalf("expected 'dev build' in detail; got %q", detail)
+	}
+}

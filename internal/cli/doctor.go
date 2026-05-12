@@ -554,6 +554,9 @@ func latestVersionCheck(d *Deps) doctorCheck {
 	return doctorCheck{
 		label: "llamactl version",
 		run: func(_ context.Context, deps *Deps) (bool, string) {
+			if deps.LlamactlVersion == "dev" || deps.LlamactlVersion == "" {
+				return true, "(dev build; skipping version check)"
+			}
 			path := versionCachePath(deps)
 			if path == "" {
 				return true, "(version check skipped: no cache yet)"

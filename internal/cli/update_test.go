@@ -126,3 +126,23 @@ func TestUpdateRefreshBypassesCache(t *testing.T) {
 		t.Fatal("expected fetcher to be called with refresh=true, but got refresh=false")
 	}
 }
+
+func TestUpdateDevBuildShortCircuits(t *testing.T) {
+	var out bytes.Buffer
+	runner := &recordingRunner{}
+	d := &Deps{Stdout: &out, Stderr: io.Discard}
+	err := runUpdate(context.Background(), d, "dev", false,
+		func(ctx context.Context, refresh bool) (string, error) { return "1.3.0", nil },
+		func() (string, error) { return "/Users/greg/go/bin/llamactl", nil },
+		runner)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := out.String()
+	if !strings.Contains(s, "dev builds don't auto-update") {
+		t.Fatalf("expected dev-build short-circuit message; got:\n%s", s)
+	}
+	if len(runner.calls) > 0 {
+		t.Fatalf("runner should NOT be called for dev build; got calls: %v", runner.calls)
+	}
+}
