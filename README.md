@@ -79,12 +79,32 @@ llama-server binds to `0.0.0.0`, so any host on your Tailnet can reach it:
 base_url=http://llm-mini.tailnet.ts.net:8080/v1
 ```
 
+## Authentication
+
+By default, llamactl serves unauthenticated — anyone on your Tailnet can reach the endpoint. To enable opt-in token authentication:
+
+```bash
+llamactl config set api_key sk-your-token-here    # or:
+export LLAMACTL_API_KEY=sk-your-token-here        # env var precedence
+llamactl serve qwen2.5-3b-instruct --detach       # plist embeds --api-key
+```
+
+Clients then pass `Authorization: Bearer sk-your-token-here`:
+
+```bash
+curl -H "Authorization: Bearer sk-your-token-here" \
+  http://localhost:8082/v1/chat/completions \
+  -d '{"model":"llamactl","messages":[{"role":"user","content":"hello"}]}'
+```
+
+`llamactl doctor` warns when a service binds publicly (0.0.0.0) without an `api_key` configured. `llamactl config list` redacts `api_key` and `hf_token` as `********`.
+
 ## Commands
 
 | Command    | What it does                                                       |
 |------------|--------------------------------------------------------------------|
 | `hardware` | Detect chip, RAM, GPU memory, OS version; cache to hardware.json   |
-| `doctor`   | Run 12 health checks; exits 2 on any failure                       |
+| `doctor`   | Run 14 health checks; exits 2 on any failure                       |
 | `search`   | Search HuggingFace for GGUF repos (preferred IDs marked `*`)       |
 | `fit`      | Rank HF GGUF variants by fit on this host; `--install` picks top ✓ |
 | `add`      | Download a preferred short-id or any HF GGUF repo                  |
@@ -94,6 +114,8 @@ base_url=http://llm-mini.tailnet.ts.net:8080/v1
 | `status`   | Show running detached services (table or `--json`)                 |
 | `stop`     | Stop a service (or all services if no id)                          |
 | `cache`    | `cache prune [--all]` — clear stale HuggingFace API cache          |
+| `config`   | `config get/set/list <key> [<value>]` — manage llamactl settings   |
+| `update`   | Upgrade llamactl via Homebrew (`--refresh` bypasses 24h cache)     |
 
 ## Recipes
 

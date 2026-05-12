@@ -33,7 +33,7 @@ func TestQuantSizeTableMonotonic(t *testing.T) {
 }
 
 func TestKVCacheTablesPopulated(t *testing.T) {
-	for _, arch := range []Arch{ArchQwen25, ArchLlama3, ArchMistral} {
+	for _, arch := range []Arch{ArchQwen25, ArchQwen3, ArchLlama3, ArchMistral} {
 		row, ok := KVCachePerTokenKB[arch]
 		if !ok {
 			t.Errorf("KVCachePerTokenKB missing arch %s", arch)

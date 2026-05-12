@@ -15,10 +15,12 @@ import (
 	"strconv"
 	"strings"
 	"syscall"
+	"time"
 
 	"github.com/spf13/cobra"
 
 	"github.com/gregmundy/llamactl/internal/hardware"
+	"github.com/gregmundy/llamactl/internal/launchd"
 	"github.com/gregmundy/llamactl/internal/server"
 )
 
@@ -103,6 +105,8 @@ func buildDoctorChecks(ctx context.Context, deps *Deps) ([]doctorCheck, string) 
 		stalePlistsCheck(deps),
 		logFilesNotOversizedCheck(deps),
 		hfCacheSizeCheck(deps),
+		authOnPublicBindCheck(deps),
+		latestVersionCheck(deps),
 	}
 	return checks, ""
 }
@@ -292,9 +296,16 @@ func portConflictsCheck(deps *Deps) doctorCheck {
 				if info.PID == 0 {
 					continue
 				}
-				l, lerr := net.Listen("tcp", ":"+strconv.Itoa(port))
-				if lerr == nil {
-					_ = l.Close()
+				conn, dialErr := net.DialTimeout("tcp", "127.0.0.1:"+strconv.Itoa(port), 200*time.Millisecond)
+				if dialErr == nil {
+					conn.Close()
+					// Port is in use — no conflict (healthy case).
+					continue
+				}
+				// Dial failed. Only flag a conflict if the port is genuinely free
+				// (connection refused). Other errors (timeout, host unreachable) are
+				// ambiguous; treat as in-use to avoid flapping doctor output.
+				if isConnectionRefused(dialErr) {
 					id := strings.TrimPrefix(svc.Label, "com.llamactl.")
 					problems = append(problems, fmt.Sprintf("%s loaded but port %d is free", id, port))
 				}
@@ -305,6 +316,19 @@ func portConflictsCheck(deps *Deps) doctorCheck {
 			return true, ""
 		},
 	}
+}
+
+// isConnectionRefused reports whether err is a TCP "connection refused" error.
+// Used by portConflictsCheck to distinguish a genuinely free port from other
+// network errors (timeouts, host unreachable) where the state is ambiguous.
+func isConnectionRefused(err error) bool {
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, syscall.ECONNREFUSED) {
+		return true
+	}
+	return strings.Contains(err.Error(), "refused")
 }
 
 // modelFilesMatchMetadataCheck flags metadata records whose on-disk size
@@ -483,6 +507,72 @@ func stalePlistsCheck(deps *Deps) doctorCheck {
 				return false, strings.Join(stale, "; ")
 			}
 			return true, ""
+		},
+	}
+}
+
+// authOnPublicBindCheck walks active (PID>0) com.llamactl.* services and
+// flags any that bind publicly (no --host or explicit 0.0.0.0) without
+// --api-key in the plist. A publicly-accessible llama-server without an
+// API key is an unauthenticated endpoint.
+func authOnPublicBindCheck(deps *Deps) doctorCheck {
+	return doctorCheck{
+		label: "Public-bound endpoints have api_key set",
+		remediation: "set api_key: `llamactl config set api_key <token>` or " +
+			"export LLAMACTL_API_KEY=<token>",
+		run: func(ctx context.Context, d *Deps) (bool, string) {
+			if d.LaunchAgentsDir == "" {
+				return true, "(no LaunchAgentsDir configured)"
+			}
+			services, err := d.LaunchdService.List(ctx)
+			if err != nil {
+				return true, "(list failed: " + err.Error() + ")"
+			}
+			for _, svc := range services {
+				if svc.PID == 0 {
+					continue // stopped service
+				}
+				if !launchd.HasPublicBind(d.LaunchAgentsDir, svc.Label) {
+					continue
+				}
+				if launchd.HasAPIKey(d.LaunchAgentsDir, svc.Label) {
+					continue
+				}
+				return false, svc.Label + " binds publicly without --api-key"
+			}
+			return true, ""
+		},
+	}
+}
+
+// latestVersionCheck is an info-level check that reports whether the running
+// llamactl is on the latest published version. It reads the on-disk version
+// cache populated by `llamactl update` (or `update --refresh`); it never makes
+// an HTTP call itself. The check always returns ok=true so it never blocks
+// doctor — it is purely informational.
+func latestVersionCheck(d *Deps) doctorCheck {
+	return doctorCheck{
+		label: "llamactl version",
+		run: func(_ context.Context, deps *Deps) (bool, string) {
+			if deps.LlamactlVersion == "dev" || deps.LlamactlVersion == "" {
+				return true, "(dev build; skipping version check)"
+			}
+			path := versionCachePath(deps)
+			if path == "" {
+				return true, "(version check skipped: no cache yet)"
+			}
+			cached, err := readVersionCache(path)
+			if err != nil {
+				return true, "(version check skipped: no cache yet)"
+			}
+			if deps.Now().Sub(cached.CheckedAt) > versionCacheTTL {
+				return true, "(version check stale; run 'llamactl update --refresh')"
+			}
+			if updateAvailable(deps.LlamactlVersion, cached.Latest) {
+				return true, fmt.Sprintf("update available: %s → %s",
+					normalizeWithV(deps.LlamactlVersion), normalizeWithV(cached.Latest))
+			}
+			return true, fmt.Sprintf("on latest (%s)", normalizeWithV(deps.LlamactlVersion))
 		},
 	}
 }

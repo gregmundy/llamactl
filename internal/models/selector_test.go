@@ -61,3 +61,27 @@ func TestSelectQuant_UnknownParamsBRow(t *testing.T) {
 		t.Fatal("expected error for missing QuantSizeTable row")
 	}
 }
+
+func TestSelectQuantSub1BModel(t *testing.T) {
+	model := PreferredIDs["qwen3-0.6b"]
+	info := hardware.Info{RAMBytes: 16 << 30}
+	q, err := SelectQuant(model, info, 8192)
+	if err != nil {
+		t.Fatalf("SelectQuant: %v", err)
+	}
+	if q != Q5_K_M {
+		t.Fatalf("got %s, want Q5_K_M", q)
+	}
+}
+
+func TestSelectQuant1_7BModel(t *testing.T) {
+	model := PreferredIDs["qwen3-1.7b"]
+	info := hardware.Info{RAMBytes: 16 << 30}
+	q, err := SelectQuant(model, info, 8192)
+	if err != nil {
+		t.Fatalf("SelectQuant: %v", err)
+	}
+	if q != Q5_K_M {
+		t.Fatalf("got %s, want Q5_K_M", q)
+	}
+}

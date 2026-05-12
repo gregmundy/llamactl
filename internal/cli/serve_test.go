@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/gregmundy/llamactl/internal/config"
 	"github.com/gregmundy/llamactl/internal/hardware"
 	"github.com/gregmundy/llamactl/internal/launchd"
 	"github.com/gregmundy/llamactl/internal/models"
@@ -278,5 +279,183 @@ func TestServeUpdatesLastServedAt(t *testing.T) {
 	got, _ := store.Get(context.Background(), "qwen2.5-7b-instruct")
 	if got.LastServedAt.IsZero() {
 		t.Error("LastServedAt should be set after serve")
+	}
+}
+
+// TestRunServeDetachedSleepSeam verifies that runServeDetached uses the
+// injected Sleep seam rather than the real time.After. With a frozen clock
+// (Now returns t0 then t0+10s) and an always-closed Sleep channel, the
+// function must return a deadline error quickly — not hang waiting for a
+// real 250ms timer.
+// TestServeDetachedUsesInjectedUserHomeDir verifies that runServeDetached uses
+// Deps.UserHomeDir (when non-nil) to populate the plist WorkingDirectory,
+// rather than calling os.UserHomeDir() directly. This lets tests point the
+// plist's WorkingDirectory at a tempDir-rooted fake home.
+func TestServeDetachedUsesInjectedUserHomeDir(t *testing.T) {
+	d, ld, _ := makeServeDeps(t)
+	tempHome := t.TempDir()
+	d.UserHomeDir = func() (string, error) { return tempHome, nil }
+
+	ld.Services["com.llamactl.qwen2.5-7b-instruct"] = launchd.ServiceInfo{
+		Label: "com.llamactl.qwen2.5-7b-instruct",
+		PID:   12345,
+		State: "running",
+	}
+
+	_, _, err := runRoot(t, d, "serve", "qwen2.5-7b-instruct", "--detach")
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+
+	plistPath := filepath.Join(d.LaunchAgentsDir, "com.llamactl.qwen2.5-7b-instruct.plist")
+	data, readErr := os.ReadFile(plistPath)
+	if readErr != nil {
+		t.Fatalf("could not read plist: %v", readErr)
+	}
+	if !strings.Contains(string(data), tempHome) {
+		t.Errorf("plist WorkingDirectory should contain injected tempHome %q; plist:\n%s", tempHome, data)
+	}
+}
+
+// TestServeAppendsAPIKeyFromConfig verifies that when Config.APIKey is set and
+// no LLAMACTL_API_KEY env var is present, runServe appends --api-key <token>
+// to the llama-server argv (and therefore into the plist ProgramArguments).
+func TestServeAppendsAPIKeyFromConfig(t *testing.T) {
+	d, ld, _ := makeServeDeps(t)
+	d.Config = &config.Config{APIKey: "sk-from-config"}
+	d.Getenv = func(key string) string { return "" } // env empty → fallback to config
+	ld.Services["com.llamactl.qwen2.5-7b-instruct"] = launchd.ServiceInfo{
+		Label: "com.llamactl.qwen2.5-7b-instruct",
+		PID:   12345,
+		State: "running",
+	}
+
+	_, _, err := runRoot(t, d, "serve", "qwen2.5-7b-instruct", "--detach")
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+
+	plistPath := filepath.Join(d.LaunchAgentsDir, "com.llamactl.qwen2.5-7b-instruct.plist")
+	data, readErr := os.ReadFile(plistPath)
+	if readErr != nil {
+		t.Fatalf("could not read plist: %v", readErr)
+	}
+	body := string(data)
+	if !strings.Contains(body, "--api-key") {
+		t.Errorf("plist should contain --api-key; got:\n%s", body)
+	}
+	if !strings.Contains(body, "sk-from-config") {
+		t.Errorf("plist should contain sk-from-config; got:\n%s", body)
+	}
+}
+
+// TestServeEnvAPIKeyBeatsConfig verifies that LLAMACTL_API_KEY env var takes
+// precedence over Config.APIKey when both are set.
+func TestServeEnvAPIKeyBeatsConfig(t *testing.T) {
+	d, ld, _ := makeServeDeps(t)
+	d.Config = &config.Config{APIKey: "sk-from-config"}
+	d.Getenv = func(key string) string {
+		if key == "LLAMACTL_API_KEY" {
+			return "sk-from-env"
+		}
+		return ""
+	}
+	ld.Services["com.llamactl.qwen2.5-7b-instruct"] = launchd.ServiceInfo{
+		Label: "com.llamactl.qwen2.5-7b-instruct",
+		PID:   12345,
+		State: "running",
+	}
+
+	_, _, err := runRoot(t, d, "serve", "qwen2.5-7b-instruct", "--detach")
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+
+	plistPath := filepath.Join(d.LaunchAgentsDir, "com.llamactl.qwen2.5-7b-instruct.plist")
+	data, readErr := os.ReadFile(plistPath)
+	if readErr != nil {
+		t.Fatalf("could not read plist: %v", readErr)
+	}
+	body := string(data)
+	if !strings.Contains(body, "sk-from-env") {
+		t.Errorf("plist should contain sk-from-env; got:\n%s", body)
+	}
+	if strings.Contains(body, "sk-from-config") {
+		t.Errorf("plist must NOT contain sk-from-config (env beats config); got:\n%s", body)
+	}
+}
+
+// TestServeNoAPIKeyWhenUnset verifies that when neither env nor config provide
+// an API key, --api-key is not present in the plist at all.
+func TestServeNoAPIKeyWhenUnset(t *testing.T) {
+	d, ld, _ := makeServeDeps(t)
+	// Config nil + Getenv returning empty → no api key
+	d.Config = nil
+	d.Getenv = func(key string) string { return "" }
+	ld.Services["com.llamactl.qwen2.5-7b-instruct"] = launchd.ServiceInfo{
+		Label: "com.llamactl.qwen2.5-7b-instruct",
+		PID:   12345,
+		State: "running",
+	}
+
+	_, _, err := runRoot(t, d, "serve", "qwen2.5-7b-instruct", "--detach")
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+
+	plistPath := filepath.Join(d.LaunchAgentsDir, "com.llamactl.qwen2.5-7b-instruct.plist")
+	data, readErr := os.ReadFile(plistPath)
+	if readErr != nil {
+		t.Fatalf("could not read plist: %v", readErr)
+	}
+	if strings.Contains(string(data), "--api-key") {
+		t.Errorf("plist must NOT contain --api-key when unset; got:\n%s", string(data))
+	}
+}
+
+func TestRunServeDetachedSleepSeam(t *testing.T) {
+	d, _, _ := makeServeDeps(t)
+
+	t0 := time.Date(2026, 5, 10, 12, 0, 0, 0, time.UTC)
+	callCount := 0
+	d.Now = func() time.Time {
+		callCount++
+		if callCount == 1 {
+			return t0
+		}
+		// Second call (inside the loop's deadline check): past the deadline.
+		return t0.Add(10 * time.Second)
+	}
+
+	// Sleep returns an already-closed channel so the select never blocks.
+	closed := make(chan time.Time)
+	close(closed)
+	d.Sleep = func(dur time.Duration) <-chan time.Time {
+		return closed
+	}
+
+	// Service never starts (Print always returns PID=0).
+	// (fakeLaunchdService with empty Services map already does this.)
+
+	done := make(chan error, 1)
+	go func() {
+		err := runServeDetached(context.Background(), d,
+			"qwen2.5-7b-instruct",
+			"/opt/homebrew/bin/llama-server",
+			[]string{"--port", "8080"},
+			8080, "balanced")
+		done <- err
+	}()
+
+	select {
+	case err := <-done:
+		if err == nil {
+			t.Fatal("expected a deadline error, got nil")
+		}
+		if !strings.Contains(err.Error(), "didn't start within") {
+			t.Errorf("err = %v; want message containing \"didn't start within\"", err)
+		}
+	case <-time.After(1 * time.Second):
+		t.Fatal("runServeDetached did not return within 1s — Sleep seam not honoured")
 	}
 }

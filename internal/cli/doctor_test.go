@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"net"
@@ -11,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/gregmundy/llamactl/internal/config"
 	"github.com/gregmundy/llamactl/internal/hardware"
 	"github.com/gregmundy/llamactl/internal/launchd"
 	"github.com/gregmundy/llamactl/internal/models"
@@ -230,6 +232,107 @@ func TestDoctor_PortConflicts_Failure(t *testing.T) {
 	out, _, _ := runRoot(t, d, "doctor")
 	if !strings.Contains(out, "✗ port conflicts") {
 		t.Errorf("expected port-conflicts to fail:\n%s", out)
+	}
+}
+
+// TestDoctor_PortConflicts_StoppedServiceNoFalsePositive verifies that a service
+// whose plist is still on disk but whose PID is 0 (stopped, not running) does
+// NOT trigger a port-conflict failure. Before the liveness filter was added,
+// doctor would report "<id> loaded but port N is free" for any stopped service
+// whose port happened to be unbound.
+func TestDoctor_PortConflicts_StoppedServiceNoFalsePositive(t *testing.T) {
+	tmp := t.TempDir()
+	plistPath := filepath.Join(tmp, "com.llamactl.gemma-4-e4b-it.plist")
+
+	// Grab a free port and immediately release it so it stays unbound.
+	l, err := net.Listen("tcp", ":0")
+	if err != nil {
+		t.Skip("could not bind :0, skipping")
+	}
+	port := l.Addr().(*net.TCPAddr).Port
+	l.Close()
+
+	writeMinimalPlist(t, plistPath, port)
+
+	d := healthyDoctorDeps(t)
+	d.LaunchAgentsDir = tmp
+	// Stopped service: PID=0 in List result; Services map has the label with PID=0
+	// so Print also returns PID=0.
+	d.LaunchdService = &fakeLaunchdService{
+		ListResult: []launchd.ServiceInfo{{
+			Label:     "com.llamactl.gemma-4-e4b-it",
+			PlistPath: plistPath,
+			PID:       0, // stopped
+			State:     "",
+		}},
+		Services: map[string]launchd.ServiceInfo{
+			"com.llamactl.gemma-4-e4b-it": {
+				Label: "com.llamactl.gemma-4-e4b-it",
+				PID:   0, // stopped
+			},
+		},
+	}
+	out, _, err := runRoot(t, d, "doctor")
+	if err != nil && strings.Contains(out, "✗ port conflicts") {
+		t.Errorf("stopped service (PID=0) should NOT trigger port-conflict false positive:\n%s", out)
+	}
+}
+
+// TestPortConflictsHealthyServingService verifies that when a service has a
+// real TCP listener on its declared port, portConflictsCheck returns ✓.
+// This is the regression test for the net.Listen/SO_REUSEADDR bug: the old
+// probe could bind alongside an active listener and incorrectly flag a
+// conflict. The Dial-based probe will succeed here, so no conflict is reported.
+func TestPortConflictsHealthyServingService(t *testing.T) {
+	// Bind a real TCP listener to simulate a running llama-server.
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer l.Close()
+	port := l.Addr().(*net.TCPAddr).Port
+
+	tmp := t.TempDir()
+	plistPath := filepath.Join(tmp, "com.llamactl.test.plist")
+	writeMinimalPlist(t, plistPath, port)
+
+	fakeSvc := &fakeLaunchdService{
+		ListResult: []launchd.ServiceInfo{{Label: "com.llamactl.test", PlistPath: plistPath, PID: 12345, State: "running"}},
+		Services:   map[string]launchd.ServiceInfo{"com.llamactl.test": {Label: "com.llamactl.test", PID: 12345, State: "running"}},
+	}
+	deps := &Deps{LaunchdService: fakeSvc}
+	check := portConflictsCheck(deps)
+	ok, detail := check.run(context.Background(), deps)
+	if !ok {
+		t.Fatalf("expected ✓ for healthy serving service; got %q", detail)
+	}
+}
+
+// TestPortConflictsServiceDownButLoaded verifies that when a service is
+// "loaded" per launchctl (PID > 0) but its port is not actually listening,
+// portConflictsCheck returns ✗.
+func TestPortConflictsServiceDownButLoaded(t *testing.T) {
+	// Grab a free port and immediately release it — so nothing is listening.
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	port := l.Addr().(*net.TCPAddr).Port
+	l.Close() // free the port; no listener
+
+	tmp := t.TempDir()
+	plistPath := filepath.Join(tmp, "com.llamactl.test.plist")
+	writeMinimalPlist(t, plistPath, port)
+
+	fakeSvc := &fakeLaunchdService{
+		ListResult: []launchd.ServiceInfo{{Label: "com.llamactl.test", PlistPath: plistPath, PID: 12345, State: "running"}},
+		Services:   map[string]launchd.ServiceInfo{"com.llamactl.test": {Label: "com.llamactl.test", PID: 12345, State: "running"}},
+	}
+	deps := &Deps{LaunchdService: fakeSvc}
+	check := portConflictsCheck(deps)
+	ok, detail := check.run(context.Background(), deps)
+	if ok {
+		t.Fatalf("expected ✗ for loaded-but-not-serving service; got ok=true detail=%q", detail)
 	}
 }
 
@@ -487,5 +590,147 @@ func TestDoctor_StalePlists_Failure(t *testing.T) {
 	out, _, _ := runRoot(t, d, "doctor")
 	if !strings.Contains(out, "✗ stale plists") {
 		t.Errorf("expected failure:\n%s", out)
+	}
+}
+
+func TestAuthCheckPublicBindNoKey(t *testing.T) {
+	tempDir := t.TempDir()
+	publicNoKey := `<plist><array><string>--port</string><string>8080</string></array></plist>`
+	os.WriteFile(filepath.Join(tempDir, "com.llamactl.foo.plist"), []byte(publicNoKey), 0o644)
+	deps := &Deps{
+		LaunchAgentsDir: tempDir,
+		LaunchdService:  &fakeLaunchdService{ListResult: []launchd.ServiceInfo{{Label: "com.llamactl.foo", PID: 12345}}},
+		Config:          &config.Config{},
+		Getenv:          func(string) string { return "" },
+	}
+	check := authOnPublicBindCheck(deps)
+	ok, detail := check.run(context.Background(), deps)
+	if ok {
+		t.Fatalf("expected ✗ for public bind without api_key; got detail=%q", detail)
+	}
+}
+
+func TestAuthCheckPublicBindWithKey(t *testing.T) {
+	tempDir := t.TempDir()
+	publicWithKey := `<plist><array><string>--port</string><string>8080</string><string>--api-key</string><string>sk-XYZ</string></array></plist>`
+	os.WriteFile(filepath.Join(tempDir, "com.llamactl.foo.plist"), []byte(publicWithKey), 0o644)
+	deps := &Deps{
+		LaunchAgentsDir: tempDir,
+		LaunchdService:  &fakeLaunchdService{ListResult: []launchd.ServiceInfo{{Label: "com.llamactl.foo", PID: 12345}}},
+		Config:          &config.Config{APIKey: "sk-XYZ"},
+		Getenv:          func(string) string { return "" },
+	}
+	check := authOnPublicBindCheck(deps)
+	ok, _ := check.run(context.Background(), deps)
+	if !ok {
+		t.Fatal("expected ✓ for public bind with api_key")
+	}
+}
+
+func TestAuthCheckLoopbackBindNoKey(t *testing.T) {
+	tempDir := t.TempDir()
+	loopback := `<plist><array><string>--host</string><string>127.0.0.1</string><string>--port</string><string>8080</string></array></plist>`
+	os.WriteFile(filepath.Join(tempDir, "com.llamactl.foo.plist"), []byte(loopback), 0o644)
+	deps := &Deps{
+		LaunchAgentsDir: tempDir,
+		LaunchdService:  &fakeLaunchdService{ListResult: []launchd.ServiceInfo{{Label: "com.llamactl.foo", PID: 12345}}},
+		Config:          &config.Config{},
+		Getenv:          func(string) string { return "" },
+	}
+	check := authOnPublicBindCheck(deps)
+	ok, _ := check.run(context.Background(), deps)
+	if !ok {
+		t.Fatal("expected ✓ for loopback bind regardless of api_key")
+	}
+}
+
+func TestAuthCheckStoppedServiceSkipped(t *testing.T) {
+	tempDir := t.TempDir()
+	publicNoKey := `<plist><array><string>--port</string><string>8080</string></array></plist>`
+	os.WriteFile(filepath.Join(tempDir, "com.llamactl.foo.plist"), []byte(publicNoKey), 0o644)
+	deps := &Deps{
+		LaunchAgentsDir: tempDir,
+		LaunchdService:  &fakeLaunchdService{ListResult: []launchd.ServiceInfo{{Label: "com.llamactl.foo", PID: 0}}}, // stopped
+		Config:          &config.Config{},
+		Getenv:          func(string) string { return "" },
+	}
+	check := authOnPublicBindCheck(deps)
+	ok, _ := check.run(context.Background(), deps)
+	if !ok {
+		t.Fatal("expected ✓ when only stopped services exist (no live public unauthenticated endpoint)")
+	}
+}
+
+func TestLatestVersionCheckOnLatest(t *testing.T) {
+	tempDir := t.TempDir()
+	raw, _ := json.Marshal(versionCache{Latest: "1.3.0", CheckedAt: time.Now()})
+	os.WriteFile(filepath.Join(tempDir, "last-version-check.json"), raw, 0o644)
+	deps := &Deps{HFCacheDir: tempDir, LlamactlVersion: "v1.3.0", Now: time.Now}
+	check := latestVersionCheck(deps)
+	ok, detail := check.run(context.Background(), deps)
+	if !ok {
+		t.Fatal("expected pass")
+	}
+	if !strings.Contains(detail, "on latest") {
+		t.Fatalf("missing 'on latest': %q", detail)
+	}
+}
+
+func TestLatestVersionCheckUpdateAvailable(t *testing.T) {
+	tempDir := t.TempDir()
+	raw, _ := json.Marshal(versionCache{Latest: "1.4.0", CheckedAt: time.Now()})
+	os.WriteFile(filepath.Join(tempDir, "last-version-check.json"), raw, 0o644)
+	deps := &Deps{HFCacheDir: tempDir, LlamactlVersion: "v1.3.0", Now: time.Now}
+	check := latestVersionCheck(deps)
+	ok, detail := check.run(context.Background(), deps)
+	if !ok {
+		t.Fatal("expected pass (info-level)")
+	}
+	if !strings.Contains(detail, "update available") {
+		t.Fatalf("missing 'update available': %q", detail)
+	}
+}
+
+func TestLatestVersionCheckSoftPassOnMissingCache(t *testing.T) {
+	deps := &Deps{HFCacheDir: filepath.Join(t.TempDir(), "no-cache-here"), LlamactlVersion: "v1.3.0", Now: time.Now}
+	check := latestVersionCheck(deps)
+	ok, detail := check.run(context.Background(), deps)
+	if !ok {
+		t.Fatal("expected soft-pass")
+	}
+	if !strings.Contains(detail, "skipped") {
+		t.Fatalf("missing 'skipped': %q", detail)
+	}
+}
+
+func TestLatestVersionCheckStaleCache(t *testing.T) {
+	tempDir := t.TempDir()
+	raw, _ := json.Marshal(versionCache{Latest: "1.3.0", CheckedAt: time.Now().Add(-48 * time.Hour)})
+	os.WriteFile(filepath.Join(tempDir, "last-version-check.json"), raw, 0o644)
+	deps := &Deps{HFCacheDir: tempDir, LlamactlVersion: "v1.3.0", Now: time.Now}
+	check := latestVersionCheck(deps)
+	ok, detail := check.run(context.Background(), deps)
+	if !ok {
+		t.Fatal("expected soft-pass")
+	}
+	if !strings.Contains(detail, "stale") {
+		t.Fatalf("missing 'stale': %q", detail)
+	}
+}
+
+func TestLatestVersionCheckSkipsDevBuild(t *testing.T) {
+	// Even if a cache file exists with a newer version, a dev build should
+	// short-circuit before reading the cache.
+	tempDir := t.TempDir()
+	raw, _ := json.Marshal(versionCache{Latest: "1.4.0", CheckedAt: time.Now()})
+	os.WriteFile(filepath.Join(tempDir, "last-version-check.json"), raw, 0o644)
+	deps := &Deps{HFCacheDir: tempDir, LlamactlVersion: "dev", Now: time.Now}
+	check := latestVersionCheck(deps)
+	ok, detail := check.run(context.Background(), deps)
+	if !ok {
+		t.Fatal("expected ok=true for dev build")
+	}
+	if !strings.Contains(detail, "dev build") {
+		t.Fatalf("expected 'dev build' in detail; got %q", detail)
 	}
 }

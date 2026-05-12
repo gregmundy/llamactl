@@ -7,6 +7,58 @@ import (
 	"testing"
 )
 
+func TestSaveRoundTrip(t *testing.T) {
+	tempDir := t.TempDir()
+	path := filepath.Join(tempDir, "config.yaml")
+	orig := Config{
+		LlamaServerPath: "/path/to/llama",
+		DefaultPort:     8080,
+		APIKey:          "sk-test-123",
+	}
+	if err := Save(path, orig); err != nil {
+		t.Fatal(err)
+	}
+	loaded, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if loaded != orig {
+		t.Fatalf("round-trip mismatch:\nwant %+v\ngot  %+v", orig, loaded)
+	}
+}
+
+func TestSaveAtomicNoPartialOnError(t *testing.T) {
+	tempDir := t.TempDir()
+	readOnly := filepath.Join(tempDir, "ro")
+	if err := os.Mkdir(readOnly, 0o500); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(readOnly, "config.yaml")
+	err := Save(path, Config{DefaultPort: 8080})
+	if err == nil {
+		t.Fatal("expected error writing to read-only dir")
+	}
+	entries, _ := os.ReadDir(readOnly)
+	if len(entries) > 0 {
+		t.Fatalf("partial tmp file left behind: %v", entries)
+	}
+}
+
+func TestSaveSecretFilePerms(t *testing.T) {
+	tempDir := t.TempDir()
+	path := filepath.Join(tempDir, "config.yaml")
+	if err := Save(path, Config{APIKey: "sk-test"}); err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Mode().Perm() != 0o600 {
+		t.Fatalf("config file mode = %o, want 0600 (holds tokens)", info.Mode().Perm())
+	}
+}
+
 func TestPaths_RespectXDGOverrides(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", "/tmp/cfg")
 	t.Setenv("XDG_CACHE_HOME", "/tmp/cache")

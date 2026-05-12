@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -262,6 +263,13 @@ func (s *slowRanger) FetchRange(ctx context.Context, repo, file string, offset, 
 	}
 	_, err := w.Write(s.body[offset:end])
 	return err
+}
+
+func TestErrInProgressIsWrapped(t *testing.T) {
+	base := fmt.Errorf("%w: foo pending", ErrInProgress)
+	if !errors.Is(base, ErrInProgress) {
+		t.Fatal("errors.Is failed on wrapped sentinel")
+	}
 }
 
 func TestDownloadOverHTTPTest(t *testing.T) {

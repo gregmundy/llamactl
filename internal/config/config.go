@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 
 	"gopkg.in/yaml.v3"
 )
@@ -17,6 +18,7 @@ type Config struct {
 	ModelsDir       string `yaml:"models_dir"`
 	HFToken         string `yaml:"hf_token"`
 	LogLevel        string `yaml:"log_level"`
+	APIKey          string `yaml:"api_key"`
 }
 
 // Load reads path and returns the parsed Config. A missing file is not an
@@ -34,4 +36,33 @@ func Load(path string) (Config, error) {
 		return Config{}, fmt.Errorf("parse %s: %w", path, err)
 	}
 	return cfg, nil
+}
+
+// Save marshals cfg to YAML and atomically writes it to path. The parent
+// directory is created (mode 0o755) if it does not exist. The file is written
+// to a sibling .tmp file first and then renamed so that readers never see a
+// partially written file. The file mode is 0o600 because the config may
+// contain tokens (HFToken, APIKey).
+func Save(path string, cfg Config) error {
+	b, err := yaml.Marshal(cfg)
+	if err != nil {
+		return fmt.Errorf("marshal config: %w", err)
+	}
+
+	dir := filepath.Dir(path)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return fmt.Errorf("create config dir %s: %w", dir, err)
+	}
+
+	tmp := path + ".tmp"
+	if err := os.WriteFile(tmp, b, 0o600); err != nil {
+		return fmt.Errorf("write temp config %s: %w", tmp, err)
+	}
+
+	if err := os.Rename(tmp, path); err != nil {
+		_ = os.Remove(tmp)
+		return fmt.Errorf("rename temp config to %s: %w", path, err)
+	}
+
+	return nil
 }

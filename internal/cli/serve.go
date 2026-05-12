@@ -119,6 +119,18 @@ func runServe(ctx context.Context, d *Deps, id string, requestedPort int, recipe
 
 	argv := recipes.FlagsFor(recipe, model, meta.Quant, meta.GGUFPath, hw, ver, caps, sizeGB, chosen, platform.Default{}.Cores())
 
+	// Resolve API key: env var takes precedence over config file.
+	apiKey := ""
+	if d.Getenv != nil {
+		apiKey = d.Getenv("LLAMACTL_API_KEY")
+	}
+	if apiKey == "" && d.Config != nil {
+		apiKey = d.Config.APIKey
+	}
+	if apiKey != "" {
+		argv = append(argv, "--api-key", apiKey)
+	}
+
 	// Update metadata.LastServedAt before launching. If launch fails the
 	// timestamp is slightly inaccurate; acceptable for v1.
 	now := time.Now
@@ -188,7 +200,11 @@ func runServeDetached(ctx context.Context, d *Deps, id, llamaServer string, argv
 	}
 	plistPath := filepath.Join(d.LaunchAgentsDir, label+".plist")
 
-	home, err := os.UserHomeDir()
+	userHomeDir := os.UserHomeDir
+	if d.UserHomeDir != nil {
+		userHomeDir = d.UserHomeDir
+	}
+	home, err := userHomeDir()
 	if err != nil {
 		return fmt.Errorf("home dir: %w", err)
 	}
@@ -221,10 +237,15 @@ func runServeDetached(ctx context.Context, d *Deps, id, llamaServer string, argv
 	}
 
 	// Poll for PID up to detachPollDeadline.
-	deadline := time.Now().Add(detachPollDeadline)
+	now := time.Now
 	if d.Now != nil {
-		deadline = d.Now().Add(detachPollDeadline)
+		now = d.Now
 	}
+	sleep := time.After
+	if d.Sleep != nil {
+		sleep = d.Sleep
+	}
+	deadline := now().Add(detachPollDeadline)
 	for {
 		info, _ := d.LaunchdService.Print(ctx, label)
 		if info.PID > 0 {
@@ -232,13 +253,7 @@ func runServeDetached(ctx context.Context, d *Deps, id, llamaServer string, argv
 				id, info.PID, recipeName, port)
 			return nil
 		}
-		var nowT time.Time
-		if d.Now != nil {
-			nowT = d.Now()
-		} else {
-			nowT = time.Now()
-		}
-		if nowT.After(deadline) {
+		if now().After(deadline) {
 			return fmt.Errorf("%w: service didn't start within %s; see %s",
 				ErrUserError, detachPollDeadline, logPath)
 		}
@@ -247,7 +262,7 @@ func runServeDetached(ctx context.Context, d *Deps, id, llamaServer string, argv
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
-		case <-time.After(detachPollInterval):
+		case <-sleep(detachPollInterval):
 		}
 	}
 }

@@ -7,6 +7,7 @@ import (
 	"io/fs"
 	"path/filepath"
 
+	"github.com/gregmundy/llamactl/internal/download"
 	"github.com/gregmundy/llamactl/internal/models"
 	"github.com/spf13/cobra"
 )
@@ -36,7 +37,7 @@ func runRemove(ctx context.Context, d *Deps, id string, purge bool) error {
 
 	if purge {
 		if _, statErr := d.FS.Stat(m.GGUFPath + ".partial"); statErr == nil {
-			return fmt.Errorf("%w: %s.partial exists — download in progress; aborting --purge", ErrUserError, m.GGUFPath)
+			return fmt.Errorf("%w: %w: %s.partial exists — aborting --purge", ErrUserError, download.ErrInProgress, m.GGUFPath)
 		}
 		fmt.Fprintf(d.Stderr,
 			"llamactl: best-effort: cannot detect other tools' use of %s; deleting anyway\n",

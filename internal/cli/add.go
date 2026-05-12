@@ -116,7 +116,7 @@ func deriveIDFromRepo(repoID string) string {
 // SHA, download if needed, optionally parse GGUF header (for HF-path mode
 // where ParamsB/Arch are still zero), and persist metadata.
 func finishAdd(ctx context.Context, d *Deps, id, repoID string, quant models.Quant,
-	file, expectedSHA string, totalSize int64, paramsB int, arch models.Arch) error {
+	file, expectedSHA string, totalSize int64, paramsB float64, arch models.Arch) error {
 
 	destDir := filepath.Join(d.SharedModelsDir, id)
 	destPath := filepath.Join(destDir, string(quant)+".gguf")
@@ -145,7 +145,7 @@ func finishAdd(ctx context.Context, d *Deps, id, repoID string, quant models.Qua
 			fmt.Fprintf(d.Stderr,
 				"llamactl: warning: could not read GGUF header (%v); ParamsB/Arch omitted\n", herr)
 		} else {
-			paramsB = int(header.ParamsCount / 1_000_000_000)
+			paramsB = float64(header.ParamsCount) / 1e9
 			arch = models.ArchFromGGUF(header.Architecture)
 		}
 	}

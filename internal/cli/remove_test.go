@@ -5,9 +5,9 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 
+	"github.com/gregmundy/llamactl/internal/download"
 	"github.com/gregmundy/llamactl/internal/models"
 )
 
@@ -58,8 +58,8 @@ func TestRemovePurgeRefusesIfPartialExists(t *testing.T) {
 		t.Fatal(err)
 	}
 	_, _, err := runRoot(t, d, "remove", "qwen2.5-7b-instruct", "--purge")
-	if err == nil || !strings.Contains(err.Error(), "in progress") {
-		t.Fatalf("err = %v, want 'in progress'", err)
+	if err == nil || !errors.Is(err, download.ErrInProgress) {
+		t.Fatalf("err = %v, want download.ErrInProgress", err)
 	}
 }
 

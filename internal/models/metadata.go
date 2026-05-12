@@ -15,8 +15,8 @@ type Metadata struct {
 
 	// Phase 2.5 additions; omitempty so legacy files decode cleanly
 	// (legacy entries lack these — selector will not run on them).
-	ParamsB int  `json:"params_b,omitempty"`
-	Arch    Arch `json:"arch,omitempty"`
+	ParamsB float64 `json:"params_b,omitempty"`
+	Arch    Arch    `json:"arch,omitempty"`
 
 	// Phase 3 addition. Updated by `serve` (foreground or detached)
 	// immediately before launching llama-server.

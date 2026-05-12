@@ -41,6 +41,12 @@ func main() {
 		Runner:     run,
 	}
 
+	configPath := paths.ConfigFile()
+	cfg, err := config.Load(configPath)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "llamactl: warning: load config: %v\n", err)
+	}
+
 	deps := &cli.Deps{
 		Stdout:           os.Stdout,
 		Stderr:           os.Stderr,
@@ -48,9 +54,13 @@ func main() {
 		HardwareJSONPath: paths.HardwareJSON(),
 		ServerResolver:   resolver,
 		ServerProber:     &server.Prober{Runner: run},
+		Config:           &cfg,
+		ConfigPath:       configPath,
 		LookPath:         exec.LookPath,
 		Getenv:           os.Getenv,
 		Now:              time.Now,
+		Sleep:            time.After,
+		UserHomeDir:      os.UserHomeDir,
 	}
 
 	// Phase 2: wire HFClient, Downloader, QuantSelector, ModelStore
@@ -81,6 +91,8 @@ func main() {
 	deps.Runner = run
 	deps.LaunchAgentsDir = launchAgentsDir
 	deps.LogsDir = logsDir
+
+	deps.LlamactlVersion = llamactlVersion
 
 	root := cli.NewRoot(deps, llamactlVersion)
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)

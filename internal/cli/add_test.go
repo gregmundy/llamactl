@@ -221,7 +221,7 @@ func makeHFPathDeps(t *testing.T, body []byte) (*Deps, *fakeHFClient, *fakeDownl
 }
 
 func TestAddHFPath_RequiresQuant(t *testing.T) {
-	body := mustGGUFBody(t, "qwen3", 8030000000)
+	body := mustGGUFBody(t, "qwen3", 8_000_000_000)
 	d, _, _, _, _ := makeHFPathDeps(t, body)
 	_, _, err := runRoot(t, d, "add", "Qwen/Qwen3-8B-Instruct-GGUF")
 	if err == nil {
@@ -236,7 +236,7 @@ func TestAddHFPath_RequiresQuant(t *testing.T) {
 }
 
 func TestAddHFPath_HappyPath(t *testing.T) {
-	body := mustGGUFBody(t, "qwen3", 8030000000)
+	body := mustGGUFBody(t, "qwen3", 8_000_000_000)
 	d, _, dl, store, shared := makeHFPathDeps(t, body)
 	_, _, err := runRoot(t, d, "add", "Qwen/Qwen3-8B-Instruct-GGUF", "--quant", "Q4_K_M")
 	if err != nil {
@@ -250,7 +250,7 @@ func TestAddHFPath_HappyPath(t *testing.T) {
 		t.Fatalf("metadata not persisted under derived id; have: %v", keys(store.M))
 	}
 	if got.ParamsB != 8 {
-		t.Errorf("ParamsB = %d, want 8", got.ParamsB)
+		t.Errorf("ParamsB = %g, want 8", got.ParamsB)
 	}
 	if string(got.Arch) != "qwen3" {
 		t.Errorf("Arch = %q, want qwen3", got.Arch)
@@ -265,7 +265,7 @@ func TestAddHFPath_HappyPath(t *testing.T) {
 }
 
 func TestAddHFPath_DerivedIDStripsGGUFSuffix(t *testing.T) {
-	body := mustGGUFBody(t, "qwen3", 8030000000)
+	body := mustGGUFBody(t, "qwen3", 8_000_000_000)
 	d, _, _, store, _ := makeHFPathDeps(t, body)
 	_, _, err := runRoot(t, d, "add", "Qwen/Qwen3-8B-Instruct-GGUF", "--quant", "Q4_K_M")
 	if err != nil {

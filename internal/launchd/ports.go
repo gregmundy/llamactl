@@ -59,6 +59,44 @@ func PortFor(dir, label string) int {
 	return extractPortArg(data)
 }
 
+// HasAPIKey reports whether the plist for label contains an --api-key arg.
+// Missing plist returns false.
+func HasAPIKey(dir, label string) bool {
+	data, err := os.ReadFile(filepath.Join(dir, label+".plist"))
+	if err != nil {
+		return false
+	}
+	return strings.Contains(string(data), "<string>--api-key</string>")
+}
+
+// HasPublicBind reports whether the plist for label binds publicly.
+// Missing --host arg is treated as default-public (llama-server binds 0.0.0.0
+// by default). Explicit 127.0.0.1 / ::1 / localhost is non-public.
+// Missing plist returns false (no service to flag).
+func HasPublicBind(dir, label string) bool {
+	data, err := os.ReadFile(filepath.Join(dir, label+".plist"))
+	if err != nil {
+		return false
+	}
+	s := string(data)
+	idx := strings.Index(s, "<string>--host</string>")
+	if idx < 0 {
+		return true // default-bind is public
+	}
+	rest := s[idx+len("<string>--host</string>"):]
+	open := strings.Index(rest, "<string>")
+	if open < 0 {
+		return true
+	}
+	rest = rest[open+len("<string>"):]
+	closeIdx := strings.Index(rest, "</string>")
+	if closeIdx < 0 {
+		return true
+	}
+	host := strings.TrimSpace(rest[:closeIdx])
+	return host != "127.0.0.1" && host != "::1" && host != "localhost"
+}
+
 // extractPortArg finds the value of `--port N` inside the plist's
 // ProgramArguments. The plist template emits each arg as a <string>
 // element; we scan for `<string>--port</string>` and read the next

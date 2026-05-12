@@ -15,6 +15,10 @@ import (
 	"golang.org/x/sys/unix"
 )
 
+// ErrInProgress signals that another caller is currently downloading the
+// same dest path. Callers can errors.Is against it.
+var ErrInProgress = errors.New("download in progress")
+
 // Ranger is the network seam — satisfied by *hf.Client. Declared locally so
 // internal/download does not depend on the broader cli.HFClient interface.
 type Ranger interface {

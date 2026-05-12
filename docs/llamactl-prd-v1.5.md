@@ -52,7 +52,7 @@ This tool compresses it to one command per phase.
 - NVIDIA, AMD, Intel GPU support
 - Web UI or dashboard
 - Multi-model orchestration (one model per `serve` command is fine)
-- Authentication on the endpoint (relies on Tailscale for access control)
+- Authentication on the endpoint (relies on Tailscale for access control) — **elevated to opt-in feature in v1.3.0 via `api_key`; see §Authentication in README**
 - Local quantization conversion (download pre-quantized only)
 - Telemetry, usage analytics, update notifications
 - Speculative decoding auto-config
@@ -213,7 +213,7 @@ llamactl update
 
 llamactl config <key> [<value>]
   Get/set keys: default_port, models_dir, hf_token, log_level,
-  llama_server_path.
+  llama_server_path, api_key.
 ```
 
 ## Core logic specifications

@@ -7,6 +7,7 @@ import (
 	"os"
 	"time"
 
+	"github.com/gregmundy/llamactl/internal/config"
 	"github.com/gregmundy/llamactl/internal/download"
 	"github.com/gregmundy/llamactl/internal/hardware"
 	"github.com/gregmundy/llamactl/internal/hf"
@@ -134,9 +135,16 @@ type Deps struct {
 	LaunchAgentsDir string // ~/Library/LaunchAgents
 	LogsDir         string // ~/Library/Logs/llamactl
 
-	LookPath func(name string) (string, error)
-	Getenv   func(key string) string
-	Now      func() time.Time
+	Config     *config.Config
+	ConfigPath string
+
+	LookPath    func(name string) (string, error)
+	Getenv      func(key string) string
+	Now         func() time.Time
+	Sleep       func(d time.Duration) <-chan time.Time
+	UserHomeDir func() (string, error)
+
+	LlamactlVersion string // set via ldflags; used by doctor latestVersionCheck
 }
 
 // OSFileSystem is the production FileSystem backed by package os.

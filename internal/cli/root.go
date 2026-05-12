@@ -29,5 +29,23 @@ func NewRoot(deps *Deps, llamactlVersion string) *cobra.Command {
 	root.AddCommand(newStopCmd(deps))
 	root.AddCommand(newStatusCmd(deps))
 	root.AddCommand(newCacheCmd(deps))
+	root.AddCommand(newConfigCmd(deps))
+	root.AddCommand(newUpdateCmd(deps))
+
+	// Cobra's SilenceUsage on the root does not auto-propagate; failing
+	// subcommands would print usage to stdout unless each child also has it
+	// set. Walk the entire command tree and set it explicitly.
+	silenceUsageTree(root)
+
 	return root
+}
+
+// silenceUsageTree recursively sets SilenceUsage=true on every descendant of
+// cmd so that usage is never printed on error regardless of how a subcommand
+// is invoked.
+func silenceUsageTree(cmd *cobra.Command) {
+	for _, child := range cmd.Commands() {
+		child.SilenceUsage = true
+		silenceUsageTree(child)
+	}
 }

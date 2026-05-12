@@ -1,6 +1,7 @@
 package models
 
 import (
+	"math"
 	"strings"
 	"testing"
 )
@@ -17,16 +18,16 @@ func TestPreferredIDsEntriesWellFormed(t *testing.T) {
 			t.Errorf("PreferredIDs[%q].HFRepo empty", id)
 		}
 		if m.ParamsB <= 0 {
-			t.Errorf("PreferredIDs[%q].ParamsB = %d", id, m.ParamsB)
+			t.Errorf("PreferredIDs[%q].ParamsB = %g", id, m.ParamsB)
 		}
 		if m.MaxCtx <= 0 {
 			t.Errorf("PreferredIDs[%q].MaxCtx = %d", id, m.MaxCtx)
 		}
-		if _, ok := QuantSizeTable[m.ParamsB]; !ok {
-			t.Errorf("PreferredIDs[%q].ParamsB = %d has no QuantSizeTable row", id, m.ParamsB)
+		if _, ok := QuantSizeTable[int(math.Round(m.ParamsB))]; !ok {
+			t.Errorf("PreferredIDs[%q].ParamsB = %g has no QuantSizeTable row", id, m.ParamsB)
 		}
 		switch m.Arch {
-		case ArchQwen25, ArchLlama3, ArchMistral:
+		case ArchQwen25, ArchQwen3, ArchLlama3, ArchMistral:
 		default:
 			t.Errorf("PreferredIDs[%q].Arch = %q (not a known Arch)", id, m.Arch)
 		}

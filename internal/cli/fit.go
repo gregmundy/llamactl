@@ -21,8 +21,9 @@ const (
 
 // fitMinModelBytes filters out imatrix calibration shards and other small
 // auxiliary GGUFs that match the quant regex but aren't actual model weights.
-// Smallest real-world model GGUF in QuantSizeTable is ~1.3 GB (3B @ Q2_K).
-const fitMinModelBytes = 500 << 20 // 500 MiB
+// 200 MiB is safely above imatrix shards (~100 MB) while still admitting
+// legitimate sub-1B Q4_K_M files (e.g. qwen3-0.6b at ~600 MB).
+const fitMinModelBytes = 200 << 20 // 200 MiB
 
 var fitQuantRe = regexp.MustCompile(`(IQ\d+_[A-Z0-9_]+|Q\d+_[A-Z0-9_]+|Q\d+_0)`)
 
@@ -34,6 +35,8 @@ type fitRow struct {
 	FreeGB    float64 `json:"free_gb,omitempty"`
 	DeficitGB float64 `json:"deficit_gb,omitempty"`
 	Note      string  `json:"note,omitempty"`
+	Downloads int     `json:"downloads,omitempty"`
+	Likes     int     `json:"likes,omitempty"`
 }
 
 func newFitCmd(d *Deps) *cobra.Command {
@@ -112,7 +115,7 @@ func runFit(ctx context.Context, d *Deps, query string, install bool, ctxSize, l
 				kvGB = 1.0
 			}
 			total := sizeGB + kvGB
-			row := fitRow{Repo: hit.ID, Quant: q, SizeGB: sizeGB}
+			row := fitRow{Repo: hit.ID, Quant: q, SizeGB: sizeGB, Downloads: hit.Downloads, Likes: hit.Likes}
 			switch {
 			case usable-total >= fitHeadroomGB:
 				row.Verdict = "ok"
@@ -139,6 +142,24 @@ func runFit(ctx context.Context, d *Deps, query string, install bool, ctxSize, l
 	sort.SliceStable(rows, func(i, j int) bool {
 		return fitRank(rows[i]) > fitRank(rows[j])
 	})
+
+	// Per-repo dedupe: show the best quant of each repo before showing alternate
+	// quants of any repo. Within each group (primary / alternates) the relative
+	// sort order is preserved so popularity-weighting still determines which repo
+	// surfaces first.
+	seen := make(map[string]bool, len(rows))
+	primary := make([]fitRow, 0, len(rows))
+	alternates := make([]fitRow, 0, len(rows))
+	for _, r := range rows {
+		if !seen[r.Repo] {
+			seen[r.Repo] = true
+			primary = append(primary, r)
+		} else {
+			alternates = append(alternates, r)
+		}
+	}
+	rows = append(primary, alternates...)
+
 	if len(rows) > limit {
 		rows = rows[:limit]
 	}
@@ -161,7 +182,9 @@ func runFit(ctx context.Context, d *Deps, query string, install bool, ctxSize, l
 func fitRank(r fitRow) float64 {
 	switch r.Verdict {
 	case "ok":
-		return 1000 + r.FreeGB
+		// Within ✓: weight by downloads (canonical repos surface first);
+		// tiebreak on size (higher fidelity preferred among equally-popular).
+		return 100_000_000 + float64(r.Downloads) + r.SizeGB
 	case "tight":
 		return 100 - r.SizeGB
 	default:

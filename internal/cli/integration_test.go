@@ -191,7 +191,7 @@ func TestIntegrationPhase25AddHFPath(t *testing.T) {
 	// Build a synthetic GGUF body that the real gguf.ReadHeader will parse.
 	body := gguftest.Build(t, 3,
 		gguftest.KV{Key: "general.architecture", Type: gguftest.TypeString, Value: "qwen3"},
-		gguftest.KV{Key: "general.parameter_count", Type: gguftest.TypeU64, Value: uint64(8030000000)},
+		gguftest.KV{Key: "general.parameter_count", Type: gguftest.TypeU64, Value: uint64(8_000_000_000)},
 	)
 	sum := sha256.Sum256(body)
 	shaHex := hex.EncodeToString(sum[:])
@@ -244,8 +244,8 @@ func TestIntegrationPhase25AddHFPath(t *testing.T) {
 	if !strings.Contains(listOut, "qwen3-8b-instruct") {
 		t.Errorf("list missing derived id:\n%s", listOut)
 	}
-	if !strings.Contains(listOut, "8B") {
-		t.Errorf("list missing 8B param from GGUF header:\n%s", listOut)
+	if !strings.Contains(listOut, "8 B") {
+		t.Errorf("list missing '8 B' param from GGUF header:\n%s", listOut)
 	}
 
 	// Verify on-disk metadata captured ParamsB and Arch.
@@ -254,7 +254,7 @@ func TestIntegrationPhase25AddHFPath(t *testing.T) {
 		t.Fatalf("Get: %v", err)
 	}
 	if got.ParamsB != 8 {
-		t.Errorf("ParamsB = %d, want 8", got.ParamsB)
+		t.Errorf("ParamsB = %g, want 8", got.ParamsB)
 	}
 	if string(got.Arch) != "qwen3" {
 		t.Errorf("Arch = %q, want qwen3", got.Arch)
