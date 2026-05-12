@@ -101,6 +101,14 @@ func TestParamsArchGemma3_27B(t *testing.T) {
 	}
 }
 
+func TestParamsArchMistral7B(t *testing.T) {
+	paramsB := paramsBFor(t, "mistral",
+		[]uint64{4096, 32000}, 32)
+	if paramsB < 7.24*0.85 || paramsB > 7.24*1.15 {
+		t.Errorf("Mistral-7B: paramsB=%.2f, want 7.24 ± 15%%", paramsB)
+	}
+}
+
 // paramsBFor builds a synthetic fixture and runs ReadHeaderWithTensors
 // against it, returning paramsB. Test helper shared across arch tests.
 func paramsBFor(t *testing.T, arch string, tokenEmbdDims []uint64, blocks uint32) float64 {

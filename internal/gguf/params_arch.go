@@ -71,8 +71,9 @@ func gemma3Params(hidden, vocab, blocks int) float64 {
 // Unknown arches return nil and the parser leaves ParamsCount=0 (preserves
 // today's "?" display).
 var paramsBFromTokenEmbd = map[string]func(hidden, vocab, blocks int) float64{
-	"llama":  llamaParams,
-	"qwen2":  qwen2Params,
-	"qwen3":  qwen3Params,
-	"gemma3": gemma3Params,
+	"llama":   llamaParams,
+	"mistral": llamaParams,
+	"qwen2":   qwen2Params,
+	"qwen3":   qwen3Params,
+	"gemma3":  gemma3Params,
 }
