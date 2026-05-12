@@ -19,6 +19,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/gregmundy/llamactl/internal/hardware"
+	"github.com/gregmundy/llamactl/internal/launchd"
 	"github.com/gregmundy/llamactl/internal/server"
 )
 
@@ -103,6 +104,7 @@ func buildDoctorChecks(ctx context.Context, deps *Deps) ([]doctorCheck, string) 
 		stalePlistsCheck(deps),
 		logFilesNotOversizedCheck(deps),
 		hfCacheSizeCheck(deps),
+		authOnPublicBindCheck(deps),
 	}
 	return checks, ""
 }
@@ -481,6 +483,40 @@ func stalePlistsCheck(deps *Deps) doctorCheck {
 			}
 			if len(stale) > 0 {
 				return false, strings.Join(stale, "; ")
+			}
+			return true, ""
+		},
+	}
+}
+
+// authOnPublicBindCheck walks active (PID>0) com.llamactl.* services and
+// flags any that bind publicly (no --host or explicit 0.0.0.0) without
+// --api-key in the plist. A publicly-accessible llama-server without an
+// API key is an unauthenticated endpoint.
+func authOnPublicBindCheck(deps *Deps) doctorCheck {
+	return doctorCheck{
+		label: "Public-bound endpoints have api_key set",
+		remediation: "set api_key: `llamactl config set api_key <token>` or " +
+			"export LLAMACTL_API_KEY=<token>",
+		run: func(ctx context.Context, d *Deps) (bool, string) {
+			if d.LaunchAgentsDir == "" {
+				return true, "(no LaunchAgentsDir configured)"
+			}
+			services, err := d.LaunchdService.List(ctx)
+			if err != nil {
+				return true, "(list failed: " + err.Error() + ")"
+			}
+			for _, svc := range services {
+				if svc.PID == 0 {
+					continue // stopped service
+				}
+				if !launchd.HasPublicBind(d.LaunchAgentsDir, svc.Label) {
+					continue
+				}
+				if launchd.HasAPIKey(d.LaunchAgentsDir, svc.Label) {
+					continue
+				}
+				return false, svc.Label + " binds publicly without --api-key"
 			}
 			return true, ""
 		},

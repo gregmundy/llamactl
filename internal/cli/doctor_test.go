@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/gregmundy/llamactl/internal/config"
 	"github.com/gregmundy/llamactl/internal/hardware"
 	"github.com/gregmundy/llamactl/internal/launchd"
 	"github.com/gregmundy/llamactl/internal/models"
@@ -530,5 +531,73 @@ func TestDoctor_StalePlists_Failure(t *testing.T) {
 	out, _, _ := runRoot(t, d, "doctor")
 	if !strings.Contains(out, "✗ stale plists") {
 		t.Errorf("expected failure:\n%s", out)
+	}
+}
+
+func TestAuthCheckPublicBindNoKey(t *testing.T) {
+	tempDir := t.TempDir()
+	publicNoKey := `<plist><array><string>--port</string><string>8080</string></array></plist>`
+	os.WriteFile(filepath.Join(tempDir, "com.llamactl.foo.plist"), []byte(publicNoKey), 0o644)
+	deps := &Deps{
+		LaunchAgentsDir: tempDir,
+		LaunchdService:  &fakeLaunchdService{ListResult: []launchd.ServiceInfo{{Label: "com.llamactl.foo", PID: 12345}}},
+		Config:          &config.Config{},
+		Getenv:          func(string) string { return "" },
+	}
+	check := authOnPublicBindCheck(deps)
+	ok, detail := check.run(context.Background(), deps)
+	if ok {
+		t.Fatalf("expected ✗ for public bind without api_key; got detail=%q", detail)
+	}
+}
+
+func TestAuthCheckPublicBindWithKey(t *testing.T) {
+	tempDir := t.TempDir()
+	publicWithKey := `<plist><array><string>--port</string><string>8080</string><string>--api-key</string><string>sk-XYZ</string></array></plist>`
+	os.WriteFile(filepath.Join(tempDir, "com.llamactl.foo.plist"), []byte(publicWithKey), 0o644)
+	deps := &Deps{
+		LaunchAgentsDir: tempDir,
+		LaunchdService:  &fakeLaunchdService{ListResult: []launchd.ServiceInfo{{Label: "com.llamactl.foo", PID: 12345}}},
+		Config:          &config.Config{APIKey: "sk-XYZ"},
+		Getenv:          func(string) string { return "" },
+	}
+	check := authOnPublicBindCheck(deps)
+	ok, _ := check.run(context.Background(), deps)
+	if !ok {
+		t.Fatal("expected ✓ for public bind with api_key")
+	}
+}
+
+func TestAuthCheckLoopbackBindNoKey(t *testing.T) {
+	tempDir := t.TempDir()
+	loopback := `<plist><array><string>--host</string><string>127.0.0.1</string><string>--port</string><string>8080</string></array></plist>`
+	os.WriteFile(filepath.Join(tempDir, "com.llamactl.foo.plist"), []byte(loopback), 0o644)
+	deps := &Deps{
+		LaunchAgentsDir: tempDir,
+		LaunchdService:  &fakeLaunchdService{ListResult: []launchd.ServiceInfo{{Label: "com.llamactl.foo", PID: 12345}}},
+		Config:          &config.Config{},
+		Getenv:          func(string) string { return "" },
+	}
+	check := authOnPublicBindCheck(deps)
+	ok, _ := check.run(context.Background(), deps)
+	if !ok {
+		t.Fatal("expected ✓ for loopback bind regardless of api_key")
+	}
+}
+
+func TestAuthCheckStoppedServiceSkipped(t *testing.T) {
+	tempDir := t.TempDir()
+	publicNoKey := `<plist><array><string>--port</string><string>8080</string></array></plist>`
+	os.WriteFile(filepath.Join(tempDir, "com.llamactl.foo.plist"), []byte(publicNoKey), 0o644)
+	deps := &Deps{
+		LaunchAgentsDir: tempDir,
+		LaunchdService:  &fakeLaunchdService{ListResult: []launchd.ServiceInfo{{Label: "com.llamactl.foo", PID: 0}}}, // stopped
+		Config:          &config.Config{},
+		Getenv:          func(string) string { return "" },
+	}
+	check := authOnPublicBindCheck(deps)
+	ok, _ := check.run(context.Background(), deps)
+	if !ok {
+		t.Fatal("expected ✓ when only stopped services exist (no live public unauthenticated endpoint)")
 	}
 }
