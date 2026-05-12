@@ -85,7 +85,28 @@ func runServe(ctx context.Context, d *Deps, id string, requestedPort int, recipe
 		ParamsB: meta.ParamsB, MaxCtx: lookupMaxCtx(meta),
 	}
 	sizeGB := float64(meta.SizeBytes) / (1 << 30)
-	chosen, err := d.PortAllocator.Free(requestedPort)
+
+	// Build the skip list of ports already claimed by sibling
+	// com.llamactl.* services. Without this, two `serve --detach`
+	// invocations on different models within a few seconds can both
+	// pick the same port: the first service's child llama-server
+	// hasn't called bind() yet (it's still loading the model into RAM)
+	// so net.Listen sees the port as free.
+	//
+	// If we're re-serving an existing service for this same model id,
+	// drop our own port from skip so we keep using it.
+	skipPorts, _ := launchd.PortsInUse(d.LaunchAgentsDir)
+	ownLabel := "com.llamactl." + meta.ID
+	if ownPort := launchd.PortFor(d.LaunchAgentsDir, ownLabel); ownPort > 0 {
+		filtered := skipPorts[:0]
+		for _, p := range skipPorts {
+			if p != ownPort {
+				filtered = append(filtered, p)
+			}
+		}
+		skipPorts = filtered
+	}
+	chosen, err := d.PortAllocator.Free(requestedPort, skipPorts)
 	if err != nil {
 		return fmt.Errorf("%w: %v", ErrUserError, err)
 	}

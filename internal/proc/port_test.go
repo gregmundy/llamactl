@@ -15,7 +15,7 @@ func TestFreePortReturnsPreferredWhenAvailable(t *testing.T) {
 	preferred := l.Addr().(*net.TCPAddr).Port
 	l.Close()
 
-	got, err := FreePort(preferred)
+	got, err := FreePort(preferred, nil)
 	if err != nil {
 		t.Fatalf("FreePort: %v", err)
 	}
@@ -33,7 +33,7 @@ func TestFreePortFallsThroughOnConflict(t *testing.T) {
 	defer l.Close()
 	preferred := l.Addr().(*net.TCPAddr).Port
 
-	got, err := FreePort(preferred)
+	got, err := FreePort(preferred, nil)
 	if err != nil {
 		t.Fatalf("FreePort: %v", err)
 	}
@@ -45,9 +45,28 @@ func TestFreePortFallsThroughOnConflict(t *testing.T) {
 	}
 }
 
+func TestFreePortSkipsListed(t *testing.T) {
+	// Find a free starting port, ask for it normally — should be returned.
+	p, err := FreePort(8080, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Now request the same starting port but skip the one we just got.
+	p2, err := FreePort(p, []int{p})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p2 == p {
+		t.Fatalf("FreePort returned skipped port %d", p)
+	}
+	if p2 < p || p2 >= p+100 {
+		t.Errorf("got %d, want value in [%d, %d)", p2, p, p+100)
+	}
+}
+
 func TestAllocatorImplementsPortAllocator(t *testing.T) {
 	var a Allocator
-	got, err := a.Free(0) // 0 means "let kernel pick"
+	got, err := a.Free(0, nil) // 0 means "let kernel pick"
 	if err != nil {
 		t.Fatalf("Free: %v", err)
 	}

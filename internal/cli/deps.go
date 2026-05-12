@@ -74,9 +74,12 @@ type LaunchdService interface {
 	List(ctx context.Context) ([]launchd.ServiceInfo, error)
 }
 
-// PortAllocator returns a bindable TCP port.
+// PortAllocator returns a bindable TCP port. skip lists ports the
+// caller knows are claimed (e.g. by sibling launchd services that are
+// still loading and haven't bound yet) so the allocator can avoid
+// returning them even when net.Listen would succeed.
 type PortAllocator interface {
-	Free(preferred int) (int, error)
+	Free(preferred int, skip []int) (int, error)
 }
 
 // ProcInspector queries the kernel about a running pid.

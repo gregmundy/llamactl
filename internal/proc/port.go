@@ -8,10 +8,17 @@ import (
 	"net"
 )
 
-// FreePort returns preferred if it's currently bindable, or the next
-// free port in [preferred, preferred+100). preferred=0 asks the kernel
-// for an ephemeral port.
-func FreePort(preferred int) (int, error) {
+// FreePort returns preferred if it's currently bindable (and not in
+// skip), or the next free port in [preferred, preferred+100) that
+// passes both checks. preferred=0 asks the kernel for an ephemeral
+// port; skip is ignored in that case.
+//
+// skip lets callers exclude ports they know are already claimed by
+// sibling processes that haven't bound yet — e.g. a freshly-bootstrapped
+// launchd service whose child llama-server is still loading its model.
+// Without this, two rapid `serve --detach` invocations on different
+// models can race to allocate the same port.
+func FreePort(preferred int, skip []int) (int, error) {
 	if preferred == 0 {
 		l, err := net.Listen("tcp", ":0")
 		if err != nil {
@@ -21,7 +28,14 @@ func FreePort(preferred int) (int, error) {
 		_ = l.Close()
 		return port, nil
 	}
+	skipSet := make(map[int]bool, len(skip))
+	for _, p := range skip {
+		skipSet[p] = true
+	}
 	for p := preferred; p < preferred+100; p++ {
+		if skipSet[p] {
+			continue
+		}
 		l, err := net.Listen("tcp", fmt.Sprintf(":%d", p))
 		if err != nil {
 			continue
@@ -35,4 +49,6 @@ func FreePort(preferred int) (int, error) {
 // Allocator implements the cli.PortAllocator interface.
 type Allocator struct{}
 
-func (Allocator) Free(preferred int) (int, error) { return FreePort(preferred) }
+func (Allocator) Free(preferred int, skip []int) (int, error) {
+	return FreePort(preferred, skip)
+}
