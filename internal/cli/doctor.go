@@ -15,6 +15,7 @@ import (
 	"strconv"
 	"strings"
 	"syscall"
+	"time"
 
 	"github.com/spf13/cobra"
 
@@ -295,9 +296,16 @@ func portConflictsCheck(deps *Deps) doctorCheck {
 				if info.PID == 0 {
 					continue
 				}
-				l, lerr := net.Listen("tcp", ":"+strconv.Itoa(port))
-				if lerr == nil {
-					_ = l.Close()
+				conn, dialErr := net.DialTimeout("tcp", "127.0.0.1:"+strconv.Itoa(port), 200*time.Millisecond)
+				if dialErr == nil {
+					conn.Close()
+					// Port is in use — no conflict (healthy case).
+					continue
+				}
+				// Dial failed. Only flag a conflict if the port is genuinely free
+				// (connection refused). Other errors (timeout, host unreachable) are
+				// ambiguous; treat as in-use to avoid flapping doctor output.
+				if isConnectionRefused(dialErr) {
 					id := strings.TrimPrefix(svc.Label, "com.llamactl.")
 					problems = append(problems, fmt.Sprintf("%s loaded but port %d is free", id, port))
 				}
@@ -308,6 +316,19 @@ func portConflictsCheck(deps *Deps) doctorCheck {
 			return true, ""
 		},
 	}
+}
+
+// isConnectionRefused reports whether err is a TCP "connection refused" error.
+// Used by portConflictsCheck to distinguish a genuinely free port from other
+// network errors (timeouts, host unreachable) where the state is ambiguous.
+func isConnectionRefused(err error) bool {
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, syscall.ECONNREFUSED) {
+		return true
+	}
+	return strings.Contains(err.Error(), "refused")
 }
 
 // modelFilesMatchMetadataCheck flags metadata records whose on-disk size

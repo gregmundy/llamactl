@@ -278,6 +278,64 @@ func TestDoctor_PortConflicts_StoppedServiceNoFalsePositive(t *testing.T) {
 	}
 }
 
+// TestPortConflictsHealthyServingService verifies that when a service has a
+// real TCP listener on its declared port, portConflictsCheck returns ✓.
+// This is the regression test for the net.Listen/SO_REUSEADDR bug: the old
+// probe could bind alongside an active listener and incorrectly flag a
+// conflict. The Dial-based probe will succeed here, so no conflict is reported.
+func TestPortConflictsHealthyServingService(t *testing.T) {
+	// Bind a real TCP listener to simulate a running llama-server.
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer l.Close()
+	port := l.Addr().(*net.TCPAddr).Port
+
+	tmp := t.TempDir()
+	plistPath := filepath.Join(tmp, "com.llamactl.test.plist")
+	writeMinimalPlist(t, plistPath, port)
+
+	fakeSvc := &fakeLaunchdService{
+		ListResult: []launchd.ServiceInfo{{Label: "com.llamactl.test", PlistPath: plistPath, PID: 12345, State: "running"}},
+		Services:   map[string]launchd.ServiceInfo{"com.llamactl.test": {Label: "com.llamactl.test", PID: 12345, State: "running"}},
+	}
+	deps := &Deps{LaunchdService: fakeSvc}
+	check := portConflictsCheck(deps)
+	ok, detail := check.run(context.Background(), deps)
+	if !ok {
+		t.Fatalf("expected ✓ for healthy serving service; got %q", detail)
+	}
+}
+
+// TestPortConflictsServiceDownButLoaded verifies that when a service is
+// "loaded" per launchctl (PID > 0) but its port is not actually listening,
+// portConflictsCheck returns ✗.
+func TestPortConflictsServiceDownButLoaded(t *testing.T) {
+	// Grab a free port and immediately release it — so nothing is listening.
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	port := l.Addr().(*net.TCPAddr).Port
+	l.Close() // free the port; no listener
+
+	tmp := t.TempDir()
+	plistPath := filepath.Join(tmp, "com.llamactl.test.plist")
+	writeMinimalPlist(t, plistPath, port)
+
+	fakeSvc := &fakeLaunchdService{
+		ListResult: []launchd.ServiceInfo{{Label: "com.llamactl.test", PlistPath: plistPath, PID: 12345, State: "running"}},
+		Services:   map[string]launchd.ServiceInfo{"com.llamactl.test": {Label: "com.llamactl.test", PID: 12345, State: "running"}},
+	}
+	deps := &Deps{LaunchdService: fakeSvc}
+	check := portConflictsCheck(deps)
+	ok, detail := check.run(context.Background(), deps)
+	if ok {
+		t.Fatalf("expected ✗ for loaded-but-not-serving service; got ok=true detail=%q", detail)
+	}
+}
+
 func TestDoctor_ModelFiles_OK(t *testing.T) {
 	tmp := t.TempDir()
 	gguf := filepath.Join(tmp, "model.gguf")
