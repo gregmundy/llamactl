@@ -305,6 +305,27 @@ func TestDoctor_DiskSpace_Failure(t *testing.T) {
 	}
 }
 
+// When SharedModelsDir doesn't exist (fresh install, before any `add`), the
+// remediation should tell the user to `mkdir -p`, not to free up space.
+func TestDoctor_DiskSpace_MissingDir_SuggestsMkdir(t *testing.T) {
+	d := healthyDoctorDeps(t)
+	missing := "/definitely-does-not-exist/llamactl-test-xyz"
+	d.SharedModelsDir = missing
+	out, _, _ := runRoot(t, d, "doctor")
+	if !strings.Contains(out, "✗ disk space") {
+		t.Fatalf("expected disk space check to fail:\n%s", out)
+	}
+	if !strings.Contains(out, "mkdir") {
+		t.Errorf("expected remediation to mention 'mkdir' for missing dir; got:\n%s", out)
+	}
+	if !strings.Contains(out, missing) {
+		t.Errorf("expected remediation to include the path %q; got:\n%s", missing, out)
+	}
+	if strings.Contains(out, "free up space") {
+		t.Errorf("misleading 'free up space' remediation shown for a missing dir:\n%s", out)
+	}
+}
+
 func TestDoctor_Tailscale_NotConfigured_Skipped(t *testing.T) {
 	d := healthyDoctorDeps(t)
 	out, _, _ := runRoot(t, d, "doctor")

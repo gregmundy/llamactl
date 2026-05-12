@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"net"
 	"os"
 	"regexp"
@@ -34,11 +35,14 @@ func newDoctorCmd(deps *Deps) *cobra.Command {
 
 // doctorCheck is one row in the doctor transcript. run returns (ok, detail);
 // detail is printed alongside the label whether ok or not. remediation is
-// printed only on failure.
+// printed only on failure. If remediationFn is non-nil it is consulted after
+// run() and its return value (when non-empty) overrides remediation — used
+// when the remediation depends on which failure branch fired.
 type doctorCheck struct {
-	label       string
-	remediation string
-	run         func(ctx context.Context, deps *Deps) (ok bool, detail string)
+	label         string
+	remediation   string
+	remediationFn func() string
+	run           func(ctx context.Context, deps *Deps) (ok bool, detail string)
 }
 
 func runDoctor(ctx context.Context, deps *Deps) error {
@@ -56,8 +60,16 @@ func runDoctor(ctx context.Context, deps *Deps) error {
 		} else {
 			fmt.Fprintf(deps.Stdout, "%s %s\n", mark, c.label)
 		}
-		if !ok && c.remediation != "" {
-			fmt.Fprintf(deps.Stdout, "    → %s\n", c.remediation)
+		if !ok {
+			rem := c.remediation
+			if c.remediationFn != nil {
+				if r := c.remediationFn(); r != "" {
+					rem = r
+				}
+			}
+			if rem != "" {
+				fmt.Fprintf(deps.Stdout, "    → %s\n", rem)
+			}
 		}
 	}
 	if fatal != "" {
@@ -284,17 +296,34 @@ func orphanedMetadataCheck(deps *Deps) doctorCheck {
 }
 
 // diskSpaceCheck verifies at least 5 GiB is available in SharedModelsDir.
+//
+// If the directory itself is missing (fresh install before any `add`), Statfs
+// returns ENOENT and the right remediation is `mkdir -p`, not "free up space".
+// remediationFn closes over a flag set inside run() so the remediation line
+// matches the actual failure mode.
 func diskSpaceCheck(deps *Deps) doctorCheck {
+	var missingDir bool
 	return doctorCheck{
 		label:       "disk space",
 		remediation: "free up space in " + deps.SharedModelsDir + " (run `llamactl remove` or move large files)",
+		remediationFn: func() string {
+			if missingDir {
+				return fmt.Sprintf("create the models directory: mkdir -p %s", deps.SharedModelsDir)
+			}
+			return ""
+		},
 		run: func(_ context.Context, _ *Deps) (bool, string) {
+			missingDir = false
 			if deps.SharedModelsDir == "" {
 				return true, "(not configured)"
 			}
 			const minFreeGB = 5
 			var stat syscall.Statfs_t
 			if err := syscall.Statfs(deps.SharedModelsDir, &stat); err != nil {
+				if errors.Is(err, fs.ErrNotExist) || errors.Is(err, syscall.ENOENT) {
+					missingDir = true
+					return false, "models directory does not exist: " + deps.SharedModelsDir
+				}
 				return false, "statfs " + deps.SharedModelsDir + ": " + err.Error()
 			}
 			freeBytes := stat.Bavail * uint64(stat.Bsize)
