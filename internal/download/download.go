@@ -39,8 +39,12 @@ type Request struct {
 }
 
 // Downloader orchestrates a single Get: lock -> resume -> stream -> verify -> rename.
+//
+// Stderr is the destination for human-facing one-line notes (e.g. flock
+// contention). nil means os.Stderr. Tests inject a *bytes.Buffer.
 type Downloader struct {
 	Ranger Ranger
+	Stderr io.Writer
 }
 
 // Get fetches DestPath from RepoID/File, resuming a .partial if present,
@@ -71,8 +75,19 @@ func (d *Downloader) Get(ctx context.Context, req *Request) error {
 		}
 	}()
 
-	if err := unix.Flock(int(f.Fd()), unix.LOCK_EX); err != nil {
-		return fmt.Errorf("flock partial: %w", err)
+	stderr := d.Stderr
+	if stderr == nil {
+		stderr = os.Stderr
+	}
+	if err := unix.Flock(int(f.Fd()), unix.LOCK_EX|unix.LOCK_NB); err != nil {
+		if errors.Is(err, unix.EWOULDBLOCK) {
+			fmt.Fprintf(stderr, "another llamactl instance is downloading %s; waiting…\n", req.RepoID)
+			if err := unix.Flock(int(f.Fd()), unix.LOCK_EX); err != nil {
+				return fmt.Errorf("flock partial: %w", err)
+			}
+		} else {
+			return fmt.Errorf("flock partial: %w", err)
+		}
 	}
 
 	// Another process may have just finished while we waited on the lock.

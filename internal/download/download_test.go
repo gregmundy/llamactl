@@ -1,6 +1,7 @@
 package download
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -194,6 +195,58 @@ func TestDownloadFlockSerializesTwoCallers(t *testing.T) {
 	}
 	if got, _ := os.ReadFile(req.DestPath); string(got) != string(body) {
 		t.Errorf("final file content mismatch")
+	}
+}
+
+// TestDownloadFlockLogsOnContention asserts that the second caller — the one
+// that has to wait on the EX flock — emits a single-line note to its Stderr
+// identifying the repo, instead of blocking silently.
+func TestDownloadFlockLogsOnContention(t *testing.T) {
+	dir := t.TempDir()
+	body := mkBody(2048)
+	gate := make(chan struct{})
+	slow := &slowRanger{body: body, gate: gate}
+
+	var buf2 bytes.Buffer
+	dl1 := &Downloader{Ranger: slow}
+	dl2 := &Downloader{Ranger: slow, Stderr: &buf2}
+
+	dest := filepath.Join(dir, "f.gguf")
+	mkReq := func() Request {
+		return Request{
+			RepoID: "owner/repo", File: "f.gguf",
+			DestPath:       dest,
+			ExpectedSHA256: sha256hex(body),
+			TotalSize:      int64(len(body)),
+		}
+	}
+
+	var wg sync.WaitGroup
+	wg.Add(2)
+	errs := make([]error, 2)
+	r0 := mkReq()
+	go func() { defer wg.Done(); errs[0] = dl1.Get(context.Background(), &r0) }()
+	// Give caller 0 time to acquire the flock and block on the gate.
+	time.Sleep(50 * time.Millisecond)
+	r1 := mkReq()
+	go func() { defer wg.Done(); errs[1] = dl2.Get(context.Background(), &r1) }()
+	// Give caller 1 time to hit the contended flock path.
+	time.Sleep(50 * time.Millisecond)
+	close(gate)
+	wg.Wait()
+
+	if errs[0] != nil {
+		t.Errorf("caller 0: %v", errs[0])
+	}
+	if errs[1] != nil {
+		t.Errorf("caller 1: %v", errs[1])
+	}
+	out := buf2.String()
+	if !strings.Contains(out, "waiting") {
+		t.Errorf("caller 1 Stderr did not mention waiting; got %q", out)
+	}
+	if !strings.Contains(out, "owner/repo") {
+		t.Errorf("caller 1 Stderr did not mention RepoID; got %q", out)
 	}
 }
 
