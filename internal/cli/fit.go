@@ -88,6 +88,15 @@ func runFit(ctx context.Context, d *Deps, query string, install bool, ctxSize, l
 			if f.LFS == nil || f.LFS.Size < fitMinModelBytes {
 				continue
 			}
+			if !strings.HasSuffix(strings.ToLower(f.RFilename), ".gguf") {
+				continue
+			}
+			if strings.Contains(f.RFilename, "-of-") {
+				// Multi-shard GGUFs (e.g. "model-00001-of-00002.gguf") are not supported
+				// by `add` today — skip them so `--install` doesn't pick something it
+				// can't install.
+				continue
+			}
 			q := fitQuantRe.FindString(f.RFilename)
 			if q == "" {
 				continue

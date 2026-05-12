@@ -201,3 +201,36 @@ func TestFitJSON(t *testing.T) {
 		}
 	}
 }
+
+func TestFitSkipsMultiShardAndNonGGUF(t *testing.T) {
+	hits := []hf.SearchHit{{ID: "user/sharded-model-GGUF"}}
+	repos := map[string]hf.Repo{
+		"user/sharded-model-GGUF": {Siblings: []hf.File{
+			// Multi-shard — should be filtered.
+			{RFilename: "model-Q8_0-00001-of-00002.gguf", LFS: &hf.LFSInfo{Size: 1 << 30, SHA256: "a"}},
+			{RFilename: "model-Q8_0-00002-of-00002.gguf", LFS: &hf.LFSInfo{Size: 1 << 30, SHA256: "b"}},
+			// Non-GGUF — should be filtered.
+			{RFilename: "model-Q4_K_M.bin", LFS: &hf.LFSInfo{Size: 2 << 30, SHA256: "c"}},
+			// Single-file GGUF — should appear.
+			{RFilename: "model-Q5_K_M.gguf", LFS: &hf.LFSInfo{Size: 3 << 30, SHA256: "d"}},
+		}},
+	}
+	d := buildFitTestDeps(t, hits, repos, hardware.Info{RAMBytes: 32 << 30})
+	var out bytes.Buffer
+	d.Stdout = &out
+	cmd := newFitCmd(d)
+	cmd.SetArgs([]string{"sharded"})
+	if err := cmd.ExecuteContext(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	s := out.String()
+	if strings.Contains(s, "-of-") {
+		t.Fatalf("multi-shard row leaked through:\n%s", s)
+	}
+	if strings.Contains(s, ".bin") {
+		t.Fatalf("non-GGUF row leaked through:\n%s", s)
+	}
+	if !strings.Contains(s, "Q5_K_M") {
+		t.Fatalf("single-file row missing:\n%s", s)
+	}
+}
