@@ -3,11 +3,17 @@ package cli
 import (
 	"context"
 	"errors"
+	"io"
+	"net"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/gregmundy/llamactl/internal/hardware"
+	"github.com/gregmundy/llamactl/internal/launchd"
+	"github.com/gregmundy/llamactl/internal/models"
 	"github.com/gregmundy/llamactl/internal/server"
 )
 
@@ -44,10 +50,17 @@ func healthyDoctorDeps(t *testing.T) *Deps {
 		ServerResolver: &fakeResolver{res: server.Resolution{
 			Path: "/opt/homebrew/bin/llama-server", Source: server.SourcePATH,
 		}},
-		ServerProber: &fakeProber{ver: server.Version{Build: 5000, SHA: "abc", Raw: "version: 5000 (abc)"}},
-		LookPath:     func(string) (string, error) { return "", errors.New("not found") },
-		Getenv:       func(string) string { return "" },
-		Now:          func() time.Time { return time.Unix(1700000000, 0).UTC() },
+		ServerProber:    &fakeProber{ver: server.Version{Build: 5000, SHA: "abc", Raw: "version: 5000 (abc)"}},
+		LookPath:        func(string) (string, error) { return "", errors.New("not found") },
+		Getenv:          func(string) string { return "" },
+		Now:             func() time.Time { return time.Unix(1700000000, 0).UTC() },
+		ModelStore:      newFakeModelStore(),
+		FS:              OSFileSystem{},
+		SharedModelsDir: t.TempDir(),
+		LaunchdService:  &fakeLaunchdService{},
+		PortAllocator:   &fakePortAllocator{},
+		LaunchAgentsDir: t.TempDir(),
+		Runner:          &noopDoctorRunner{},
 	}
 }
 
@@ -147,5 +160,221 @@ func TestDoctor_IogpuUnsetWithLargeRAM(t *testing.T) {
 	}
 	if !strings.Contains(out, "iogpu.wired_limit_mb") {
 		t.Errorf("expected sysctl key in output, got:\n%s", out)
+	}
+}
+
+// noopDoctorRunner is the default Runner for doctor tests; returns nil
+// for every command. Tailscale-specific tests override with a different Runner.
+type noopDoctorRunner struct{}
+
+func (noopDoctorRunner) Run(_ context.Context, _ string, _ []string, _ string, _, _ io.Writer) error {
+	return nil
+}
+
+// tailscaleRunner returns a canned tailscale status response.
+type tailscaleRunner struct {
+	jsonOutput string
+	runErr     error
+}
+
+func (r *tailscaleRunner) Run(_ context.Context, name string, _ []string, _ string, stdout, _ io.Writer) error {
+	if r.runErr != nil {
+		return r.runErr
+	}
+	if name == "tailscale" {
+		_, _ = io.WriteString(stdout, r.jsonOutput)
+	}
+	return nil
+}
+
+func TestDoctor_PortConflicts_OK(t *testing.T) {
+	tmp := t.TempDir()
+	plistPath := filepath.Join(tmp, "com.llamactl.x.plist")
+	writeMinimalPlist(t, plistPath, 18080)
+	l, _ := net.Listen("tcp", ":18080")
+	if l == nil {
+		t.Skip("could not bind :18080, skipping")
+	}
+	defer l.Close()
+
+	d := healthyDoctorDeps(t)
+	d.LaunchAgentsDir = tmp
+	d.LaunchdService = &fakeLaunchdService{
+		ListResult: []launchd.ServiceInfo{{Label: "com.llamactl.x", PlistPath: plistPath, PID: 12345, State: "running"}},
+		Services:   map[string]launchd.ServiceInfo{"com.llamactl.x": {Label: "com.llamactl.x", PID: 12345, State: "running"}},
+	}
+	out, _, _ := runRoot(t, d, "doctor")
+	if strings.Contains(out, "✗ port conflicts") {
+		t.Errorf("port-conflicts should pass:\n%s", out)
+	}
+}
+
+func TestDoctor_PortConflicts_Failure(t *testing.T) {
+	tmp := t.TempDir()
+	plistPath := filepath.Join(tmp, "com.llamactl.x.plist")
+	l, _ := net.Listen("tcp", ":0")
+	port := l.Addr().(*net.TCPAddr).Port
+	l.Close()
+	writeMinimalPlist(t, plistPath, port)
+
+	d := healthyDoctorDeps(t)
+	d.LaunchAgentsDir = tmp
+	d.LaunchdService = &fakeLaunchdService{
+		ListResult: []launchd.ServiceInfo{{Label: "com.llamactl.x", PlistPath: plistPath, PID: 12345, State: "running"}},
+		Services:   map[string]launchd.ServiceInfo{"com.llamactl.x": {Label: "com.llamactl.x", PID: 12345, State: "running"}},
+	}
+	out, _, _ := runRoot(t, d, "doctor")
+	if !strings.Contains(out, "✗ port conflicts") {
+		t.Errorf("expected port-conflicts to fail:\n%s", out)
+	}
+}
+
+func TestDoctor_ModelFiles_OK(t *testing.T) {
+	tmp := t.TempDir()
+	gguf := filepath.Join(tmp, "model.gguf")
+	if err := os.WriteFile(gguf, []byte(strings.Repeat("x", 1000)), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	d := healthyDoctorDeps(t)
+	store := newFakeModelStore()
+	_ = store.Put(context.Background(), models.Metadata{ID: "x", GGUFPath: gguf, SizeBytes: 1000})
+	d.ModelStore = store
+	out, _, _ := runRoot(t, d, "doctor")
+	if strings.Contains(out, "✗ model files match metadata") {
+		t.Errorf("should pass:\n%s", out)
+	}
+}
+
+func TestDoctor_ModelFiles_Failure(t *testing.T) {
+	tmp := t.TempDir()
+	gguf := filepath.Join(tmp, "model.gguf")
+	_ = os.WriteFile(gguf, []byte("xxxx"), 0o644)
+	d := healthyDoctorDeps(t)
+	store := newFakeModelStore()
+	_ = store.Put(context.Background(), models.Metadata{ID: "x", GGUFPath: gguf, SizeBytes: 10_000_000})
+	d.ModelStore = store
+	out, _, _ := runRoot(t, d, "doctor")
+	if !strings.Contains(out, "✗ model files match metadata") {
+		t.Errorf("expected failure:\n%s", out)
+	}
+}
+
+func TestDoctor_OrphanedMetadata_OK(t *testing.T) {
+	tmp := t.TempDir()
+	gguf := filepath.Join(tmp, "model.gguf")
+	_ = os.WriteFile(gguf, []byte("xxx"), 0o644)
+	d := healthyDoctorDeps(t)
+	store := newFakeModelStore()
+	_ = store.Put(context.Background(), models.Metadata{ID: "x", GGUFPath: gguf, SizeBytes: 3})
+	d.ModelStore = store
+	out, _, _ := runRoot(t, d, "doctor")
+	if strings.Contains(out, "✗ orphaned metadata") {
+		t.Errorf("should pass:\n%s", out)
+	}
+}
+
+func TestDoctor_OrphanedMetadata_Failure(t *testing.T) {
+	d := healthyDoctorDeps(t)
+	store := newFakeModelStore()
+	_ = store.Put(context.Background(), models.Metadata{ID: "x", GGUFPath: "/no/such/file.gguf", SizeBytes: 3})
+	d.ModelStore = store
+	out, _, _ := runRoot(t, d, "doctor")
+	if !strings.Contains(out, "✗ orphaned metadata") {
+		t.Errorf("expected failure:\n%s", out)
+	}
+}
+
+func TestDoctor_DiskSpace_OK(t *testing.T) {
+	d := healthyDoctorDeps(t)
+	out, _, _ := runRoot(t, d, "doctor")
+	if strings.Contains(out, "✗ disk space") {
+		t.Errorf("should pass:\n%s", out)
+	}
+}
+
+func TestDoctor_DiskSpace_Failure(t *testing.T) {
+	d := healthyDoctorDeps(t)
+	d.SharedModelsDir = "/no/such/path/at/all"
+	out, _, _ := runRoot(t, d, "doctor")
+	if !strings.Contains(out, "✗ disk space") {
+		t.Errorf("expected failure (statfs on missing path):\n%s", out)
+	}
+}
+
+func TestDoctor_Tailscale_NotConfigured_Skipped(t *testing.T) {
+	d := healthyDoctorDeps(t)
+	out, _, _ := runRoot(t, d, "doctor")
+	if !strings.Contains(out, "✓ tailscale") {
+		t.Errorf("expected ✓ tailscale (skipped):\n%s", out)
+	}
+}
+
+func TestDoctor_Tailscale_Online_OK(t *testing.T) {
+	d := healthyDoctorDeps(t)
+	d.LookPath = func(name string) (string, error) {
+		if name == "tailscale" {
+			return "/usr/local/bin/tailscale", nil
+		}
+		return "", os.ErrNotExist
+	}
+	d.Runner = &tailscaleRunner{jsonOutput: `{"Self":{"Online":true}}`}
+	out, _, _ := runRoot(t, d, "doctor")
+	if strings.Contains(out, "✗ tailscale") {
+		t.Errorf("should pass:\n%s", out)
+	}
+}
+
+func TestDoctor_Tailscale_Offline_Failure(t *testing.T) {
+	d := healthyDoctorDeps(t)
+	d.LookPath = func(name string) (string, error) {
+		if name == "tailscale" {
+			return "/usr/local/bin/tailscale", nil
+		}
+		return "", os.ErrNotExist
+	}
+	d.Runner = &tailscaleRunner{jsonOutput: `{"Self":{"Online":false}}`}
+	out, _, _ := runRoot(t, d, "doctor")
+	if !strings.Contains(out, "✗ tailscale") {
+		t.Errorf("expected failure:\n%s", out)
+	}
+}
+
+func TestDoctor_StalePlists_OK(t *testing.T) {
+	tmp := t.TempDir()
+	llamaServer := filepath.Join(tmp, "llama-server")
+	_ = os.WriteFile(llamaServer, []byte("#!/bin/sh\n"), 0o755)
+	plistPath := filepath.Join(tmp, "com.llamactl.x.plist")
+	plistBody := `<plist><dict>
+<key>ProgramArguments</key><array><string>` + llamaServer + `</string></array>
+</dict></plist>`
+	_ = os.WriteFile(plistPath, []byte(plistBody), 0o644)
+
+	d := healthyDoctorDeps(t)
+	d.LaunchAgentsDir = tmp
+	d.LaunchdService = &fakeLaunchdService{
+		ListResult: []launchd.ServiceInfo{{Label: "com.llamactl.x", PlistPath: plistPath}},
+	}
+	out, _, _ := runRoot(t, d, "doctor")
+	if strings.Contains(out, "✗ stale plists") {
+		t.Errorf("should pass:\n%s", out)
+	}
+}
+
+func TestDoctor_StalePlists_Failure(t *testing.T) {
+	tmp := t.TempDir()
+	plistPath := filepath.Join(tmp, "com.llamactl.x.plist")
+	plistBody := `<plist><dict>
+<key>ProgramArguments</key><array><string>/no/such/llama-server</string></array>
+</dict></plist>`
+	_ = os.WriteFile(plistPath, []byte(plistBody), 0o644)
+
+	d := healthyDoctorDeps(t)
+	d.LaunchAgentsDir = tmp
+	d.LaunchdService = &fakeLaunchdService{
+		ListResult: []launchd.ServiceInfo{{Label: "com.llamactl.x", PlistPath: plistPath}},
+	}
+	out, _, _ := runRoot(t, d, "doctor")
+	if !strings.Contains(out, "✗ stale plists") {
+		t.Errorf("expected failure:\n%s", out)
 	}
 }
