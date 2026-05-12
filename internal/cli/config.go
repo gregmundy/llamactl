@@ -120,11 +120,11 @@ func runConfigSet(d *Deps, key, value string) error {
 		return fmt.Errorf("%w: unknown config key %q", ErrUserError, key)
 	}
 
-	// Work on a copy; only update d.Config on successful Save.
-	copy := *d.Config
+	// Work on a draft; only update d.Config on successful Save.
+	draft := *d.Config
 
-	copyVal := reflect.ValueOf(&copy).Elem()
-	fv := copyVal.FieldByIndex(field.Index)
+	draftVal := reflect.ValueOf(&draft).Elem()
+	fv := draftVal.FieldByIndex(field.Index)
 
 	switch fv.Kind() {
 	case reflect.String:
@@ -150,12 +150,12 @@ func runConfigSet(d *Deps, key, value string) error {
 		return fmt.Errorf("%w: unsupported field type for key %q", ErrUserError, key)
 	}
 
-	if err := config.Save(d.ConfigPath, copy); err != nil {
+	if err := config.Save(d.ConfigPath, draft); err != nil {
 		return fmt.Errorf("save config: %w", err)
 	}
 
-	// Persist the mutated copy back to the shared pointer.
-	*d.Config = copy
+	// Persist the mutated draft back to the shared pointer.
+	*d.Config = draft
 
 	fmt.Fprintf(d.Stdout, "%s updated\n", key)
 	return nil

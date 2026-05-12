@@ -100,8 +100,8 @@ func TestConfigListRedactsSecrets(t *testing.T) {
 	if strings.Contains(s, "hf_secret") {
 		t.Fatalf("HFToken leaked:\n%s", s)
 	}
-	if !strings.Contains(s, "********") {
-		t.Fatalf("missing redacted indicator:\n%s", s)
+	if !strings.Contains(s, "********  (set; redacted)") {
+		t.Fatalf("missing exact redacted indicator:\n%s", s)
 	}
 	if !strings.Contains(s, "8080") {
 		t.Fatalf("non-secret value missing:\n%s", s)
@@ -119,5 +119,73 @@ func TestConfigSetCreatesFileIfMissing(t *testing.T) {
 	}
 	if _, err := config.Load(cfgPath); err != nil {
 		t.Fatalf("file not created: %v", err)
+	}
+	loaded, _ := config.Load(cfgPath)
+	if loaded.DefaultPort != 8080 {
+		t.Fatalf("DefaultPort not persisted: %d", loaded.DefaultPort)
+	}
+}
+
+// TestConfigSetThenGet exercises the full set→get round-trip for every
+// supported config key. For secret keys (api_key, hf_token), `get` returns the
+// redacted sentinel because formatValue redacts secrets in all contexts.
+func TestConfigSetThenGet(t *testing.T) {
+	cases := []struct {
+		key      string
+		setValue string
+		wantGet  string
+	}{
+		{"llama_server_path", "/usr/local/bin/llama-server", "/usr/local/bin/llama-server"},
+		{"default_port", "11434", "11434"},
+		{"models_dir", "/tmp/models", "/tmp/models"},
+		{"hf_token", "hf_abc123", "********  (set; redacted)"},
+		{"log_level", "debug", "debug"},
+		{"api_key", "sk-round-trip", "********  (set; redacted)"},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.key, func(t *testing.T) {
+			tempDir := t.TempDir()
+			cfgPath := filepath.Join(tempDir, "config.yaml")
+			d := &Deps{
+				Config:     &config.Config{},
+				ConfigPath: cfgPath,
+				Stdout:     io.Discard,
+				Stderr:     io.Discard,
+			}
+
+			// Set the value.
+			setCmd := newConfigCmd(d)
+			setCmd.SetArgs([]string{"set", tc.key, tc.setValue})
+			if err := setCmd.Execute(); err != nil {
+				t.Fatalf("set %s=%q: %v", tc.key, tc.setValue, err)
+			}
+
+			// Get it back.
+			var out bytes.Buffer
+			d.Stdout = &out
+			getCmd := newConfigCmd(d)
+			getCmd.SetArgs([]string{"get", tc.key})
+			if err := getCmd.Execute(); err != nil {
+				t.Fatalf("get %s: %v", tc.key, err)
+			}
+
+			got := strings.TrimSpace(out.String())
+			if got != tc.wantGet {
+				t.Fatalf("get %s = %q, want %q", tc.key, got, tc.wantGet)
+			}
+		})
+	}
+}
+
+func TestConfigSetRejectsNegativePort(t *testing.T) {
+	tempDir := t.TempDir()
+	d := &Deps{Config: &config.Config{}, ConfigPath: filepath.Join(tempDir, "config.yaml"), Stdout: io.Discard, Stderr: io.Discard}
+	cmd := newConfigCmd(d)
+	// Use "--" to prevent cobra from interpreting "-1" as a shorthand flag.
+	cmd.SetArgs([]string{"set", "default_port", "--", "-1"})
+	err := cmd.Execute()
+	if err == nil || !errors.Is(err, ErrUserError) {
+		t.Fatalf("expected ErrUserError for negative port, got %v", err)
 	}
 }
