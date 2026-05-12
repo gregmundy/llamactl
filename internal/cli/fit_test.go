@@ -146,6 +146,33 @@ func TestFitInstallNoCandidate(t *testing.T) {
 	}
 }
 
+func TestFitSkipsTinyAuxiliaryFiles(t *testing.T) {
+	hits := []hf.SearchHit{{ID: "user/some-model-GGUF"}}
+	repos := map[string]hf.Repo{
+		"user/some-model-GGUF": {Siblings: []hf.File{
+			// Imatrix shard — tiny, has a quant tag, should be filtered.
+			{RFilename: "imatrix-Q4_K_M.gguf", LFS: &hf.LFSInfo{Size: 100 << 20, SHA256: "a"}},
+			// Real model — should appear.
+			{RFilename: "model-Q5_K_M.gguf", LFS: &hf.LFSInfo{Size: 4 << 30, SHA256: "b"}},
+		}},
+	}
+	d := buildFitTestDeps(t, hits, repos, hardware.Info{RAMBytes: 32 << 30})
+	var out bytes.Buffer
+	d.Stdout = &out
+	cmd := newFitCmd(d)
+	cmd.SetArgs([]string{"some-model"})
+	if err := cmd.ExecuteContext(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	s := out.String()
+	if strings.Contains(s, "imatrix") {
+		t.Fatalf("imatrix shard should have been filtered:\n%s", s)
+	}
+	if !strings.Contains(s, "Q5_K_M") {
+		t.Fatalf("real model row missing:\n%s", s)
+	}
+}
+
 func TestFitJSON(t *testing.T) {
 	hits := []hf.SearchHit{{ID: "unsloth/gemma-4-E4B-it-GGUF"}}
 	repos := map[string]hf.Repo{

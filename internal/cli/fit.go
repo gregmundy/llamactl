@@ -19,6 +19,11 @@ const (
 	fitDefaultCtx = 8192
 )
 
+// fitMinModelBytes filters out imatrix calibration shards and other small
+// auxiliary GGUFs that match the quant regex but aren't actual model weights.
+// Smallest real-world model GGUF in QuantSizeTable is ~1.3 GB (3B @ Q2_K).
+const fitMinModelBytes = 500 << 20 // 500 MiB
+
 var fitQuantRe = regexp.MustCompile(`(IQ\d+_[A-Z0-9_]+|Q\d+_[A-Z0-9_]+|Q\d+_0)`)
 
 type fitRow struct {
@@ -80,7 +85,7 @@ func runFit(ctx context.Context, d *Deps, query string, install bool, ctxSize, l
 			}
 		}
 		for _, f := range repo.Siblings {
-			if f.LFS == nil {
+			if f.LFS == nil || f.LFS.Size < fitMinModelBytes {
 				continue
 			}
 			q := fitQuantRe.FindString(f.RFilename)
