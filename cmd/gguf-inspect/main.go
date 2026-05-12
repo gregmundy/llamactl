@@ -19,7 +19,12 @@ func main() {
 		fmt.Fprintln(os.Stderr, "usage: gguf-inspect <file.gguf>")
 		os.Exit(2)
 	}
-	h, err := gguf.ReadHeader(os.Args[1])
+	h0, err := gguf.ReadHeader(os.Args[1])
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "error:", err)
+		os.Exit(1)
+	}
+	h, err := gguf.ReadHeaderWithTensors(os.Args[1])
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "error:", err)
 		os.Exit(1)
@@ -27,6 +32,13 @@ func main() {
 	fmt.Printf("GGUF version:    %d\n", h.Version)
 	fmt.Printf("Tensor count:    %d\n", h.TensorCount)
 	fmt.Printf("Architecture:    %s\n", h.Architecture)
-	fmt.Printf("ParamsCount:     %d (raw)\n", h.ParamsCount)
+
+	// Branch on whether the kv-block produced 0 but the walk recovered a value
+	if h0.ParamsCount == 0 && h.ParamsCount != 0 {
+		fmt.Printf("ParamsCount:     %d (via tensor-shape fallback)\n", h.ParamsCount)
+	} else {
+		fmt.Printf("ParamsCount:     %d\n", h.ParamsCount)
+	}
+
 	fmt.Printf("ContextLength:   %d\n", h.ContextLength)
 }
