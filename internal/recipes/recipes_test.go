@@ -109,8 +109,8 @@ func TestFlagsFor_LowMemoryRecipeAlwaysNoMlock(t *testing.T) {
 
 func TestFlagsFor_FlashAttnOnModernBuild(t *testing.T) {
 	args := FlagsFor(Recipes["chat"], mkModel(32768), models.Q4_K_M, "/x", mkHW(64), mkVer(4500), 4.4, 8080)
-	if !argvHasFlag(args, "--flash-attn") {
-		t.Error("expected --flash-attn on build 4500")
+	if v, ok := argvFlag(args, "--flash-attn"); !ok || v != "on" {
+		t.Errorf("--flash-attn = %q (ok=%v), want on", v, ok)
 	}
 }
 
@@ -124,8 +124,8 @@ func TestFlagsFor_FlashAttnSkippedOnOldHomebrew(t *testing.T) {
 func TestFlagsFor_FlashAttnOnLlamavmCustom(t *testing.T) {
 	// llamavm-managed builds use cmake counter (small numbers). Assume modern.
 	args := FlagsFor(Recipes["chat"], mkModel(32768), models.Q4_K_M, "/x", mkHW(64), mkVer(3), 4.4, 8080)
-	if !argvHasFlag(args, "--flash-attn") {
-		t.Error("expected --flash-attn on llamavm build (Build=3)")
+	if v, ok := argvFlag(args, "--flash-attn"); !ok || v != "on" {
+		t.Errorf("--flash-attn = %q (ok=%v), want on (llamavm build)", v, ok)
 	}
 }
 

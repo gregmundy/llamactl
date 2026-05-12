@@ -75,7 +75,10 @@ func FlagsFor(r Recipe, m models.Model, _ models.Quant, ggufPath string,
 	}
 
 	if shouldAddFlashAttn(ver) {
-		args = append(args, "--flash-attn")
+		// Recent llama-server builds made --flash-attn tristate
+		// (on|off|auto) — bare flag now errors with "expected value".
+		// We always pass `on` since Apple Silicon Metal benefits from it.
+		args = append(args, "--flash-attn", "on")
 	}
 
 	return args
