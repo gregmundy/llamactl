@@ -85,6 +85,32 @@ func (c *Cache) PruneOlderThan(d time.Duration) (int, error) {
 	return removed, nil
 }
 
+// GCEmptyNamespaces removes empty subdirectories of the cache root.
+// Missing root is not an error.
+func (c *Cache) GCEmptyNamespaces() error {
+	entries, err := os.ReadDir(c.root)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return err
+	}
+	for _, e := range entries {
+		if !e.IsDir() {
+			continue
+		}
+		nsPath := filepath.Join(c.root, e.Name())
+		children, err := os.ReadDir(nsPath)
+		if err != nil {
+			continue
+		}
+		if len(children) == 0 {
+			_ = os.Remove(nsPath)
+		}
+	}
+	return nil
+}
+
 func (c *Cache) Get(ns, key string, ttl time.Duration) ([]byte, bool, error) {
 	data, err := os.ReadFile(c.path(ns, key))
 	if errors.Is(err, fs.ErrNotExist) {

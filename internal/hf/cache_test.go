@@ -107,3 +107,33 @@ func TestCachePruneOlderThanMissingRoot(t *testing.T) {
 		t.Fatalf("removed=%d, want 0", n)
 	}
 }
+
+func TestCacheGCEmptyNamespaces(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(dir, "hf-old"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(dir, "hf-new"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "hf-new", "x.json"), []byte("{}"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	c := NewCache(dir)
+	if err := c.GCEmptyNamespaces(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "hf-old")); !os.IsNotExist(err) {
+		t.Fatal("hf-old should be removed")
+	}
+	if _, err := os.Stat(filepath.Join(dir, "hf-new")); err != nil {
+		t.Fatal("hf-new should still exist")
+	}
+}
+
+func TestCacheGCMissingRoot(t *testing.T) {
+	c := NewCache("/definitely-does-not-exist/llamactl-test")
+	if err := c.GCEmptyNamespaces(); err != nil {
+		t.Fatalf("missing root should not error: %v", err)
+	}
+}

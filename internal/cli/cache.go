@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/gregmundy/llamactl/internal/hf"
 	"github.com/spf13/cobra"
 )
 
@@ -45,6 +46,8 @@ func runCachePrune(d *Deps, all bool) error {
 	} else {
 		fmt.Fprintf(d.Stdout, "removed %d stale cache file(s)\n", n)
 	}
+	cache := hf.NewCache(d.HFCacheDir)
+	_ = cache.GCEmptyNamespaces()
 	return nil
 }
 
