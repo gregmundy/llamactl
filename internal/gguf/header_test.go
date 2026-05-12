@@ -275,3 +275,72 @@ func TestReadHeaderRealGemmaFile(t *testing.T) {
 		t.Fatalf("ParamsCount=%d, want ~7-8B (Gemma 4 E4B reports size_label=7.5B)", h.ParamsCount)
 	}
 }
+
+func TestReadHeaderWithTensorsNoFormulaArch(t *testing.T) {
+	raw := gguftest.BuildWithTensors(t, 3,
+		[]gguftest.Tensor{
+			{Name: "token_embd.weight", Dims: []uint64{4096, 32000}, Type: 0, Offset: 0},
+		},
+		gguftest.KV{Key: "general.architecture", Type: gguftest.TypeString, Value: "exotic"},
+		gguftest.KV{Key: "exotic.block_count", Type: gguftest.TypeU32, Value: uint32(32)},
+	)
+	path := filepath.Join(t.TempDir(), "exotic.gguf")
+	if err := os.WriteFile(path, raw, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	h, err := ReadHeaderWithTensors(path)
+	if err != nil {
+		t.Fatalf("ReadHeaderWithTensors: %v", err)
+	}
+	if h.Architecture != "exotic" {
+		t.Errorf("Architecture=%q, want %q", h.Architecture, "exotic")
+	}
+	if h.ParamsCount != 0 {
+		t.Errorf("ParamsCount=%d, want 0 (no formula for exotic)", h.ParamsCount)
+	}
+	if h.BlockCount != 32 {
+		t.Errorf("BlockCount=%d, want 32", h.BlockCount)
+	}
+}
+
+func TestReadHeaderWithTensorsParamsCountAlreadySet(t *testing.T) {
+	raw := gguftest.BuildWithTensors(t, 3,
+		[]gguftest.Tensor{
+			{Name: "token_embd.weight", Dims: []uint64{4096, 32000}, Type: 0, Offset: 0},
+		},
+		gguftest.KV{Key: "general.architecture", Type: gguftest.TypeString, Value: "llama"},
+		gguftest.KV{Key: "general.parameter_count", Type: gguftest.TypeU64, Value: uint64(7_000_000_000)},
+	)
+	path := filepath.Join(t.TempDir(), "f.gguf")
+	if err := os.WriteFile(path, raw, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	h, err := ReadHeaderWithTensors(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if h.ParamsCount != 7_000_000_000 {
+		t.Errorf("ParamsCount=%d, want 7B preserved from kv-block", h.ParamsCount)
+	}
+}
+
+func TestReadHeaderWithTensorsTruncatedDescriptor(t *testing.T) {
+	raw := gguftest.BuildWithTensors(t, 3,
+		[]gguftest.Tensor{
+			{Name: "token_embd.weight", Dims: []uint64{4096, 32000}, Type: 0, Offset: 0},
+		},
+		gguftest.KV{Key: "general.architecture", Type: gguftest.TypeString, Value: "exotic"},
+	)
+	truncated := raw[:len(raw)-8]
+	path := filepath.Join(t.TempDir(), "trunc.gguf")
+	if err := os.WriteFile(path, truncated, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	h, err := ReadHeaderWithTensors(path)
+	if err != nil {
+		t.Fatalf("expected no error on truncation; got %v", err)
+	}
+	if h.ParamsCount != 0 {
+		t.Errorf("ParamsCount=%d, want 0 on truncation", h.ParamsCount)
+	}
+}
