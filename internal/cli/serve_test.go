@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -191,6 +192,74 @@ func TestServeDetachedBootsOutExistingService(t *testing.T) {
 	// Verify Bootout was called for the existing service before Load.
 	if len(ld.Booted) != 1 {
 		t.Errorf("Bootout calls = %d, want 1", len(ld.Booted))
+	}
+}
+
+// Reproducer for the v1.2.0 collision bug: a sibling com.llamactl.*.plist
+// already claims port 8080. The new serve call must pass that port in
+// the skip list so PortAllocator avoids it even though net.Listen on
+// 8080 would succeed (the sibling's child llama-server is still loading
+// and hasn't called bind() yet).
+func TestServeDetachedSkipsSiblingPorts(t *testing.T) {
+	d, ld, alloc := makeServeDeps(t)
+	if err := os.MkdirAll(d.LaunchAgentsDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// Write a sibling plist claiming port 8080.
+	siblingPlist := `<plist><array><string>--port</string><string>8080</string></array></plist>`
+	if err := os.WriteFile(
+		filepath.Join(d.LaunchAgentsDir, "com.llamactl.other-model.plist"),
+		[]byte(siblingPlist), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	ld.Services["com.llamactl.qwen2.5-7b-instruct"] = launchd.ServiceInfo{
+		Label: "com.llamactl.qwen2.5-7b-instruct",
+		PID:   12345,
+		State: "running",
+	}
+	_, _, err := runRoot(t, d, "serve", "qwen2.5-7b-instruct", "--detach")
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	if len(alloc.Skipped) != 1 {
+		t.Fatalf("allocator called %d times, want 1", len(alloc.Skipped))
+	}
+	skip := alloc.Skipped[0]
+	if len(skip) != 1 || skip[0] != 8080 {
+		t.Errorf("skip = %v, want [8080] (sibling's port)", skip)
+	}
+}
+
+// Re-serving the same model id must NOT skip its own current port —
+// otherwise rapid restarts would needlessly walk forward by one each time.
+func TestServeDetachedDoesNotSkipOwnPort(t *testing.T) {
+	d, ld, alloc := makeServeDeps(t)
+	if err := os.MkdirAll(d.LaunchAgentsDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// Pre-existing plist for THIS model id on port 8080.
+	ownPlist := `<plist><array><string>--port</string><string>8080</string></array></plist>`
+	if err := os.WriteFile(
+		filepath.Join(d.LaunchAgentsDir, "com.llamactl.qwen2.5-7b-instruct.plist"),
+		[]byte(ownPlist), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	ld.Services["com.llamactl.qwen2.5-7b-instruct"] = launchd.ServiceInfo{
+		Label: "com.llamactl.qwen2.5-7b-instruct",
+		PID:   12345,
+		State: "running",
+	}
+	_, _, err := runRoot(t, d, "serve", "qwen2.5-7b-instruct", "--detach")
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	if len(alloc.Skipped) != 1 {
+		t.Fatalf("allocator called %d times, want 1", len(alloc.Skipped))
+	}
+	for _, p := range alloc.Skipped[0] {
+		if p == 8080 {
+			t.Errorf("own port 8080 should NOT be in skip list; got %v", alloc.Skipped[0])
+		}
 	}
 }
 

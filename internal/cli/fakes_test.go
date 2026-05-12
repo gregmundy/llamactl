@@ -177,15 +177,19 @@ func (f *fakeLaunchdService) List(_ context.Context) ([]launchd.ServiceInfo, err
 
 type fakePortAllocator struct {
 	Allocated []int
+	Skipped   [][]int     // skip slice captured per call (for assertions)
 	Returns   map[int]int // preferred → returned
 }
 
-func (f *fakePortAllocator) Free(preferred int) (int, error) {
+func (f *fakePortAllocator) Free(preferred int, skip []int) (int, error) {
 	out := preferred
 	if v, ok := f.Returns[preferred]; ok {
 		out = v
 	}
 	f.Allocated = append(f.Allocated, out)
+	// Copy skip so later mutations by the caller can't change our record.
+	cp := append([]int(nil), skip...)
+	f.Skipped = append(f.Skipped, cp)
 	return out, nil
 }
 
