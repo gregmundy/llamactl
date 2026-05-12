@@ -280,3 +280,55 @@ func TestServeUpdatesLastServedAt(t *testing.T) {
 		t.Error("LastServedAt should be set after serve")
 	}
 }
+
+// TestRunServeDetachedSleepSeam verifies that runServeDetached uses the
+// injected Sleep seam rather than the real time.After. With a frozen clock
+// (Now returns t0 then t0+10s) and an always-closed Sleep channel, the
+// function must return a deadline error quickly — not hang waiting for a
+// real 250ms timer.
+func TestRunServeDetachedSleepSeam(t *testing.T) {
+	d, _, _ := makeServeDeps(t)
+
+	t0 := time.Date(2026, 5, 10, 12, 0, 0, 0, time.UTC)
+	callCount := 0
+	d.Now = func() time.Time {
+		callCount++
+		if callCount == 1 {
+			return t0
+		}
+		// Second call (inside the loop's deadline check): past the deadline.
+		return t0.Add(10 * time.Second)
+	}
+
+	// Sleep returns an already-closed channel so the select never blocks.
+	closed := make(chan time.Time)
+	close(closed)
+	d.Sleep = func(dur time.Duration) <-chan time.Time {
+		return closed
+	}
+
+	// Service never starts (Print always returns PID=0).
+	// (fakeLaunchdService with empty Services map already does this.)
+
+	done := make(chan error, 1)
+	go func() {
+		err := runServeDetached(context.Background(), d,
+			"qwen2.5-7b-instruct",
+			"/opt/homebrew/bin/llama-server",
+			[]string{"--port", "8080"},
+			8080, "balanced")
+		done <- err
+	}()
+
+	select {
+	case err := <-done:
+		if err == nil {
+			t.Fatal("expected a deadline error, got nil")
+		}
+		if !strings.Contains(err.Error(), "didn't start within") {
+			t.Errorf("err = %v; want message containing \"didn't start within\"", err)
+		}
+	case <-time.After(1 * time.Second):
+		t.Fatal("runServeDetached did not return within 1s — Sleep seam not honoured")
+	}
+}

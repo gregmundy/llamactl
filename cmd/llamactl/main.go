@@ -51,6 +51,7 @@ func main() {
 		LookPath:         exec.LookPath,
 		Getenv:           os.Getenv,
 		Now:              time.Now,
+		Sleep:            time.After,
 	}
 
 	// Phase 2: wire HFClient, Downloader, QuantSelector, ModelStore

@@ -137,6 +137,7 @@ type Deps struct {
 	LookPath func(name string) (string, error)
 	Getenv   func(key string) string
 	Now      func() time.Time
+	Sleep    func(d time.Duration) <-chan time.Time
 }
 
 // OSFileSystem is the production FileSystem backed by package os.
