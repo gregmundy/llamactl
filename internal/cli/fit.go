@@ -88,7 +88,12 @@ func runFit(ctx context.Context, d *Deps, query string, install bool, ctxSize, l
 			if f.LFS == nil || f.LFS.Size < fitMinModelBytes {
 				continue
 			}
-			if !strings.HasSuffix(strings.ToLower(f.RFilename), ".gguf") {
+			lower := strings.ToLower(f.RFilename)
+			if !strings.HasSuffix(lower, ".gguf") {
+				continue
+			}
+			if strings.Contains(lower, "mmproj") {
+				// Multimodal projector (CLIP/vision component) — not a standalone model.
 				continue
 			}
 			if strings.Contains(f.RFilename, "-of-") {

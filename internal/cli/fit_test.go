@@ -173,6 +173,33 @@ func TestFitSkipsTinyAuxiliaryFiles(t *testing.T) {
 	}
 }
 
+func TestFitSkipsMmprojSiblings(t *testing.T) {
+	hits := []hf.SearchHit{{ID: "user/multimodal-GGUF"}}
+	repos := map[string]hf.Repo{
+		"user/multimodal-GGUF": {Siblings: []hf.File{
+			// mmproj — should be filtered.
+			{RFilename: "mmproj-model-Q8_0.gguf", LFS: &hf.LFSInfo{Size: 600 << 20, SHA256: "a"}},
+			// Real model — should appear.
+			{RFilename: "model-Q5_K_M.gguf", LFS: &hf.LFSInfo{Size: 5 << 30, SHA256: "b"}},
+		}},
+	}
+	d := buildFitTestDeps(t, hits, repos, hardware.Info{RAMBytes: 32 << 30})
+	var out bytes.Buffer
+	d.Stdout = &out
+	cmd := newFitCmd(d)
+	cmd.SetArgs([]string{"multimodal"})
+	if err := cmd.ExecuteContext(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	s := out.String()
+	if strings.Contains(s, "mmproj") {
+		t.Fatalf("mmproj row leaked through:\n%s", s)
+	}
+	if !strings.Contains(s, "Q5_K_M") {
+		t.Fatalf("real model row missing:\n%s", s)
+	}
+}
+
 func TestFitJSON(t *testing.T) {
 	hits := []hf.SearchHit{{ID: "unsloth/gemma-4-E4B-it-GGUF"}}
 	repos := map[string]hf.Repo{
