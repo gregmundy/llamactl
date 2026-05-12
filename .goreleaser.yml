@@ -14,7 +14,7 @@ builds:
     goos: [darwin]
     goarch: [arm64]
     ldflags:
-      - -s -w -X main.llamactlVersion={{.Version}}
+      - -s -w -X main.llamactlVersion=v{{.Version}}
 
 archives:
   - id: default
