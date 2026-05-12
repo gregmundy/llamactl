@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"math"
 	"regexp"
 	"sort"
 	"strings"
@@ -290,13 +291,46 @@ func runFitSpeculative(ctx context.Context, d *Deps, mainID string, limit int) e
 		return nil
 	}
 
-	// Placeholder rendering — Task 15 replaces this with sorted tabwriter + footer.
+	// Sort: Ok rows first (sorted by |SizeRatio - 7.5| ascending — closest
+	// to the ideal 5-15× midpoint rises first), then !Ok rows by Reason.
+	sort.SliceStable(rows, func(i, j int) bool {
+		ai := rows[i].Verdict == "refused"
+		aj := rows[j].Verdict == "refused"
+		if ai != aj {
+			return !ai
+		}
+		if !ai {
+			di := math.Abs(rows[i].SizeRatio - 7.5)
+			dj := math.Abs(rows[j].SizeRatio - 7.5)
+			return di < dj
+		}
+		return rows[i].Reason < rows[j].Reason
+	})
+
 	if limit > 0 && len(rows) > limit {
 		rows = rows[:limit]
 	}
+
+	fmt.Fprintf(d.Stdout, "Draft candidates for %s (%g B, %s):\n\n",
+		mainID, mainMeta.ParamsB, mainMeta.Arch)
+	tw := tabwriter.NewWriter(d.Stdout, 0, 0, 2, ' ', 0)
+	fmt.Fprintln(tw, "DRAFT ID\tARCH\tPARAMSB\tRATIO\tCOMBINED RAM\tVERDICT")
 	for _, r := range rows {
-		fmt.Fprintf(d.Stdout, "%-40s %-8s %.1f B  ratio=%.1fx  RAM=%.1fGB  verdict=%s  %s\n",
-			r.DraftID, r.Arch, r.ParamsB, r.SizeRatio, r.CombinedRAMGB, r.Verdict, r.Reason)
+		symbol := "✓ ok"
+		if r.Verdict == "ratio-low" {
+			symbol = "⚠ ratio-low"
+		} else if r.Verdict == "ratio-high" {
+			symbol = "⚠ ratio-high"
+		} else if r.Verdict == "refused" {
+			symbol = "✗ refused"
+		}
+		fmt.Fprintf(tw, "%s\t%s\t%g B\t%.1f×\t%.1f GB\t%s\n",
+			r.DraftID, r.Arch, r.ParamsB, r.SizeRatio, r.CombinedRAMGB, symbol)
 	}
+	if err := tw.Flush(); err != nil {
+		return fmt.Errorf("flush tabwriter: %w", err)
+	}
+	fmt.Fprintln(d.Stdout)
+	fmt.Fprintln(d.Stdout, "Note: speculative decoding speedup depends on workload; ratio is a heuristic only.")
 	return nil
 }
