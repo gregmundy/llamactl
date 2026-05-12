@@ -12,6 +12,7 @@ import (
 
 	"github.com/gregmundy/llamactl/internal/hardware"
 	"github.com/gregmundy/llamactl/internal/hf"
+	"github.com/gregmundy/llamactl/internal/models"
 )
 
 func buildFitTestDeps(t *testing.T, hits []hf.SearchHit, repos map[string]hf.Repo, hw hardware.Info) *Deps {
@@ -333,5 +334,122 @@ func TestFitSkipsMultiShardAndNonGGUF(t *testing.T) {
 	}
 	if !strings.Contains(s, "Q5_K_M") {
 		t.Fatalf("single-file row missing:\n%s", s)
+	}
+}
+
+// --- Phase 6b: --speculative tests ---
+
+func TestFitSpeculativeListsInstalledDrafts(t *testing.T) {
+	tmp := t.TempDir()
+	store := newFakeModelStore()
+	// Main + three candidates: one arch-mismatch (dropped), two arch-match.
+	seedSpec(t, store, "qwen2.5-7b-instruct", models.ArchQwen25, 7)
+	seedSpec(t, store, "qwen2.5-0.5b-instruct", models.ArchQwen25, 0.5) // ratio 14×
+	seedSpec(t, store, "qwen2.5-1.5b-instruct", models.ArchQwen25, 1.5) // ratio ~4.67×
+	seedSpec(t, store, "llama-3-1b-instruct", models.ArchLlama3, 1)     // dropped
+
+	var out bytes.Buffer
+	d := &Deps{
+		HardwareDetector: fakeHardwareDetector{Info: hardware.Info{RAMBytes: 64 * (1 << 30)}},
+		HardwareJSONPath: filepath.Join(tmp, "hardware.json"),
+		ModelStore:       store,
+		Stdout:           &out,
+		FS:               OSFileSystem{},
+	}
+	if err := runFitSpeculative(context.Background(), d, "qwen2.5-7b-instruct", 10); err != nil {
+		t.Fatal(err)
+	}
+	s := out.String()
+	if !strings.Contains(s, "qwen2.5-0.5b-instruct") || !strings.Contains(s, "qwen2.5-1.5b-instruct") {
+		t.Errorf("expected both qwen2 drafts in output:\n%s", s)
+	}
+	if strings.Contains(s, "llama-3-1b-instruct") {
+		t.Errorf("llama-arch draft should be dropped from output:\n%s", s)
+	}
+}
+
+func TestFitSpeculativeMainNotInstalled(t *testing.T) {
+	tmp := t.TempDir()
+	store := newFakeModelStore()
+	d := &Deps{
+		HardwareDetector: fakeHardwareDetector{Info: hardware.Info{RAMBytes: 64 * (1 << 30)}},
+		HardwareJSONPath: filepath.Join(tmp, "hardware.json"),
+		ModelStore:       store,
+		FS:               OSFileSystem{},
+	}
+	err := runFitSpeculative(context.Background(), d, "nonexistent", 10)
+	if err == nil {
+		t.Fatal("expected error for missing main")
+	}
+	if !errors.Is(err, ErrUserError) {
+		t.Errorf("expected ErrUserError; got %v", err)
+	}
+}
+
+func TestFitSpeculativeEmptyCandidates(t *testing.T) {
+	tmp := t.TempDir()
+	store := newFakeModelStore()
+	seedSpec(t, store, "qwen2.5-7b-instruct", models.ArchQwen25, 7)
+
+	var out bytes.Buffer
+	d := &Deps{
+		HardwareDetector: fakeHardwareDetector{Info: hardware.Info{RAMBytes: 64 * (1 << 30)}},
+		HardwareJSONPath: filepath.Join(tmp, "hardware.json"),
+		ModelStore:       store,
+		Stdout:           &out,
+		FS:               OSFileSystem{},
+	}
+	if err := runFitSpeculative(context.Background(), d, "qwen2.5-7b-instruct", 10); err != nil {
+		t.Fatalf("expected no error on empty candidates; got %v", err)
+	}
+	if !strings.Contains(out.String(), "no installed draft candidates") {
+		t.Errorf("expected empty-candidates message; got:\n%s", out.String())
+	}
+}
+
+func TestFitSpeculativeRatioOrder(t *testing.T) {
+	tmp := t.TempDir()
+	store := newFakeModelStore()
+	// Main + three candidates whose ratios bracket the 7.5 midpoint.
+	seedSpec(t, store, "qwen2.5-32b-instruct", models.ArchQwen25, 32)
+	seedSpec(t, store, "draft-a", models.ArchQwen25, 4)    // ratio 8 → closest to 7.5
+	seedSpec(t, store, "draft-b", models.ArchQwen25, 2.67) // ratio ~12
+	seedSpec(t, store, "draft-c", models.ArchQwen25, 8)    // ratio 4
+
+	var out bytes.Buffer
+	d := &Deps{
+		HardwareDetector: fakeHardwareDetector{Info: hardware.Info{RAMBytes: 128 * (1 << 30)}},
+		HardwareJSONPath: filepath.Join(tmp, "hardware.json"),
+		ModelStore:       store,
+		Stdout:           &out,
+		FS:               OSFileSystem{},
+	}
+	if err := runFitSpeculative(context.Background(), d, "qwen2.5-32b-instruct", 10); err != nil {
+		t.Fatal(err)
+	}
+	s := out.String()
+	aIdx := strings.Index(s, "draft-a")
+	bIdx := strings.Index(s, "draft-b")
+	cIdx := strings.Index(s, "draft-c")
+	// Expected order: a (|8-7.5|=0.5) first, then c (|4-7.5|=3.5), then b (|12-7.5|=4.5).
+	if !(aIdx < cIdx && cIdx < bIdx) {
+		t.Errorf("rows out of order: a=%d, b=%d, c=%d (want a < c < b)\n%s", aIdx, bIdx, cIdx, s)
+	}
+}
+
+// seedSpec adds a model to the fakeModelStore with minimal metadata
+// suitable for SpeculativePair tests.
+func seedSpec(t *testing.T, store *fakeModelStore, id string, arch models.Arch, paramsB float64) {
+	t.Helper()
+	if err := store.Put(context.Background(), models.Metadata{
+		ID:        id,
+		Repo:      "fake/" + id,
+		Quant:     models.Q4_K_M,
+		GGUFPath:  "/fake/" + id + ".gguf",
+		SizeBytes: int64(paramsB * 600_000_000),
+		ParamsB:   paramsB,
+		Arch:      arch,
+	}); err != nil {
+		t.Fatal(err)
 	}
 }
