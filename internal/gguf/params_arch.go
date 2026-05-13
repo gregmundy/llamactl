@@ -76,4 +76,9 @@ var paramsBFromTokenEmbd = map[string]func(hidden, vocab, blocks int) float64{
 	"qwen2":   qwen2Params,
 	"qwen3":   qwen3Params,
 	"gemma3":  gemma3Params,
+	// Gemma 4 is the next-generation Gemma family. Until calibration data is
+	// available, alias to gemma3Params — the family likely shares its layer
+	// structure within ~15%. If wrong, the worst case is ParamsCount=0
+	// (the existing "?" display for unknown arches).
+	"gemma4": gemma3Params,
 }

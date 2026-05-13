@@ -110,6 +110,18 @@ func TestParamsArchMistral7B(t *testing.T) {
 }
 
 // paramsBFor builds a synthetic fixture and runs ReadHeaderWithTensors
+// Gemma 4 aliases to gemma3Params until calibration data lands. Asserts
+// the alias is wired — a gemma4-arch GGUF lacking parameter_count + size_label
+// should still recover a non-zero paramsB via the formula table.
+func TestParamsArchGemma4Alias(t *testing.T) {
+	// Same dims as Gemma-3-4B; expect the gemma3Params formula to return ~4.3 B.
+	paramsB := paramsBFor(t, "gemma4",
+		[]uint64{2560, 262144}, 34)
+	if paramsB < 4.30*0.85 || paramsB > 4.30*1.15 {
+		t.Errorf("Gemma-4 (gemma3 alias) at 2560/262144/34: paramsB=%.2f, want 4.30 ± 15%%", paramsB)
+	}
+}
+
 // against it, returning paramsB. Test helper shared across arch tests.
 func paramsBFor(t *testing.T, arch string, tokenEmbdDims []uint64, blocks uint32) float64 {
 	t.Helper()

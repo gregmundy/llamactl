@@ -31,10 +31,16 @@ var PreferenceOrder = []Quant{Q5_K_M, Q4_K_M, Q4_K_S, IQ4_XS, IQ3_M, IQ3_XS, Q2_
 type Arch string
 
 const (
-	ArchQwen25  Arch = "qwen2.5"
+	// ArchQwen25 matches the GGUF general.architecture value emitted by both
+	// Qwen 2 and Qwen 2.5 family GGUFs (they share the same architecture).
+	// The constant's name preserves the user-facing "Qwen 2.5" branding while
+	// the value matches what gguf.ReadHeader actually returns.
+	ArchQwen25  Arch = "qwen2"
 	ArchQwen3   Arch = "qwen3"
 	ArchLlama3  Arch = "llama3"
 	ArchMistral Arch = "mistral"
+	ArchGemma3  Arch = "gemma3"
+	ArchGemma4  Arch = "gemma4"
 )
 
 // Selector constants from PRD §6.1.
@@ -81,4 +87,8 @@ var KVCachePerTokenKB = map[Arch]map[Quant]float64{
 	ArchQwen3:   {Q8_0: 0.4},
 	ArchLlama3:  {Q8_0: 0.5},
 	ArchMistral: {Q8_0: 0.5},
+	ArchGemma3:  {Q8_0: 0.5},
+	// Gemma4 is the next-generation Gemma family; KV footprint matches gemma3
+	// until measured otherwise.
+	ArchGemma4: {Q8_0: 0.5},
 }
