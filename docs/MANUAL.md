@@ -748,6 +748,7 @@ The PRD called out the following as **out of scope** for v1. Re-elevation in lat
 | v1.4.2 | 2026-05-12 | Hotfix: `fit` no longer hangs when an HF API response stalls. Added transport-level `ResponseHeaderTimeout` (30 s) to the HTTP client. Downloads unaffected (no global `Timeout`). |
 | v1.4.3 | 2026-05-12 | `fit` parallelizes its `RepoInfo` loop (8 concurrent) — `fit gemma` drops from ~60 s to ~10 s. TTY progress line `"fetching repo info (N/M)…"` updates in place during the wait; suppressed for non-TTY output so pipes stay clean. |
 | v1.4.4 | 2026-05-12 | Fix: `hf_token` set via `config` was being silently ignored (env-only resolution path). Now `LLAMACTL_HF_TOKEN > HF_TOKEN > config hf_token > anonymous`. |
+| v1.4.5 | 2026-05-13 | New `agent` recipe for deterministic utility workloads (summarize / extract / classify / rewrite). Pins `--temp 0`, `--top-p 1.0`, `--top-k 0`, `--predict 2048`, `--reasoning off` — the last flag disables thinking on reasoning models so they return non-empty content instead of burning the budget inside `<think>` blocks. |
 
 ---
 
