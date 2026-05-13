@@ -23,6 +23,10 @@ type fakeHFClient struct {
 	Repos      map[string]hf.Repo
 	Bytes      map[string][]byte // key = repoID + "/" + file
 	FetchCalls int
+	// RepoInfoDelay is an optional sleep applied to every RepoInfo call.
+	// Used to verify parallelism in `fit` — N hits × delay should wall-time
+	// at roughly delay when the loop is concurrent, vs N×delay when serial.
+	RepoInfoDelay time.Duration
 }
 
 func (f *fakeHFClient) Search(ctx context.Context, q string) ([]hf.SearchHit, error) {
@@ -32,6 +36,13 @@ func (f *fakeHFClient) SearchRefresh(ctx context.Context, q string) ([]hf.Search
 	return f.SearchHits[q], nil
 }
 func (f *fakeHFClient) RepoInfo(ctx context.Context, repoID string) (hf.Repo, error) {
+	if f.RepoInfoDelay > 0 {
+		select {
+		case <-time.After(f.RepoInfoDelay):
+		case <-ctx.Done():
+			return hf.Repo{}, ctx.Err()
+		}
+	}
 	r, ok := f.Repos[repoID]
 	if !ok {
 		return hf.Repo{}, errors.New("404")

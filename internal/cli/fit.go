@@ -6,14 +6,39 @@ import (
 	"fmt"
 	"io"
 	"math"
+	"os"
 	"regexp"
 	"sort"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"text/tabwriter"
 
+	"github.com/gregmundy/llamactl/internal/hf"
 	"github.com/gregmundy/llamactl/internal/models"
 	"github.com/spf13/cobra"
 )
+
+// fitRepoInfoConcurrency caps the number of in-flight HF RepoInfo requests
+// during a `fit` invocation. HF's anonymous rate limit is comfortably above
+// this, and 8 keeps the worst-case wall time at ~one slow request rather
+// than (slow × hits).
+const fitRepoInfoConcurrency = 8
+
+// isTTY reports whether w is a writer connected to a terminal. Used to
+// gate progress feedback so piped output (e.g. `fit ... | jq`) stays
+// clean and test buffers don't see the spinner bytes.
+func isTTY(w io.Writer) bool {
+	f, ok := w.(*os.File)
+	if !ok {
+		return false
+	}
+	fi, err := f.Stat()
+	if err != nil {
+		return false
+	}
+	return fi.Mode()&os.ModeCharDevice != 0
+}
 
 const (
 	fitHeadroomGB = 4.0
@@ -76,68 +101,112 @@ func runFit(ctx context.Context, d *Deps, query string, install bool, ctxSize, l
 	}
 	usable := models.GpuAddressableGB(hw) - models.OSOverheadGB - models.HeadroomGB
 
-	var rows []fitRow
+	// Parallelize the per-hit RepoInfo calls. HF is rate-friendly to small
+	// bursts and a bounded worker pool caps wall time at ~one slow request
+	// instead of summing across all hits. Progress feedback (when stderr is
+	// a TTY) keeps users informed during the wait.
+	var (
+		rows      []fitRow
+		rowsMu    sync.Mutex
+		completed atomic.Int32
+		total     = int32(len(hits))
+		showProg  = isTTY(d.Stderr) && total > 1
+	)
+	if showProg {
+		fmt.Fprintf(d.Stderr, "fetching repo info (0/%d)…", total)
+	}
+	emitProgress := func() {
+		if !showProg {
+			return
+		}
+		done := completed.Add(1)
+		// \r returns to column 0; trailing spaces overwrite any prior longer line.
+		fmt.Fprintf(d.Stderr, "\rfetching repo info (%d/%d)…     ", done, total)
+	}
+
+	sem := make(chan struct{}, fitRepoInfoConcurrency)
+	var wg sync.WaitGroup
 	for _, hit := range hits {
-		repo, err := d.HFClient.RepoInfo(ctx, hit.ID)
-		if err != nil {
-			continue
-		}
-		paramsB := models.ParseParamCountFromRepo(hit.ID)
-		if paramsB == 0 {
-			paramsB = 13 // conservative fallback
-		}
-		arch := models.Arch("")
-		for _, m := range models.PreferredIDs {
-			if strings.EqualFold(m.HFRepo, hit.ID) {
-				arch = m.Arch
-				break
+		wg.Add(1)
+		sem <- struct{}{}
+		go func(hit hf.SearchHit) {
+			defer wg.Done()
+			defer func() { <-sem }()
+			defer emitProgress()
+
+			repo, err := d.HFClient.RepoInfo(ctx, hit.ID)
+			if err != nil {
+				return
 			}
-		}
-		for _, f := range repo.Siblings {
-			if f.LFS == nil || f.LFS.Size < fitMinModelBytes {
-				continue
+			paramsB := models.ParseParamCountFromRepo(hit.ID)
+			if paramsB == 0 {
+				paramsB = 13 // conservative fallback
 			}
-			lower := strings.ToLower(f.RFilename)
-			if !strings.HasSuffix(lower, ".gguf") {
-				continue
+			arch := models.Arch("")
+			for _, m := range models.PreferredIDs {
+				if strings.EqualFold(m.HFRepo, hit.ID) {
+					arch = m.Arch
+					break
+				}
 			}
-			if strings.Contains(lower, "mmproj") {
-				// Multimodal projector (CLIP/vision component) — not a standalone model.
-				continue
+			var local []fitRow
+			for _, f := range repo.Siblings {
+				if f.LFS == nil || f.LFS.Size < fitMinModelBytes {
+					continue
+				}
+				lower := strings.ToLower(f.RFilename)
+				if !strings.HasSuffix(lower, ".gguf") {
+					continue
+				}
+				if strings.Contains(lower, "mmproj") {
+					// Multimodal projector (CLIP/vision component) — not a standalone model.
+					continue
+				}
+				if strings.Contains(f.RFilename, "-of-") {
+					// Multi-shard GGUFs (e.g. "model-00001-of-00002.gguf") are not supported
+					// by `add` today — skip them so `--install` doesn't pick something it
+					// can't install.
+					continue
+				}
+				q := fitQuantRe.FindString(f.RFilename)
+				if q == "" {
+					continue
+				}
+				sizeGB := float64(f.LFS.Size) / 1e9
+				kvGB := models.KVCacheGB(arch, paramsB, ctxSize)
+				if kvGB == 0 {
+					kvGB = 1.0
+				}
+				totalGB := sizeGB + kvGB
+				row := fitRow{Repo: hit.ID, Quant: q, SizeGB: sizeGB, Downloads: hit.Downloads, Likes: hit.Likes}
+				switch {
+				case usable-totalGB >= fitHeadroomGB:
+					row.Verdict = "ok"
+					row.FreeGB = usable - totalGB
+					row.Note = fmt.Sprintf("%.0f GB free", row.FreeGB)
+				case usable >= totalGB:
+					row.Verdict = "tight"
+					row.FreeGB = usable - totalGB
+					row.Note = "tight headroom"
+				default:
+					row.Verdict = "too-big"
+					row.DeficitGB = totalGB - usable
+					row.Note = fmt.Sprintf("need %.0f GB more", row.DeficitGB)
+				}
+				local = append(local, row)
 			}
-			if strings.Contains(f.RFilename, "-of-") {
-				// Multi-shard GGUFs (e.g. "model-00001-of-00002.gguf") are not supported
-				// by `add` today — skip them so `--install` doesn't pick something it
-				// can't install.
-				continue
+			if len(local) > 0 {
+				rowsMu.Lock()
+				rows = append(rows, local...)
+				rowsMu.Unlock()
 			}
-			q := fitQuantRe.FindString(f.RFilename)
-			if q == "" {
-				continue
-			}
-			sizeGB := float64(f.LFS.Size) / 1e9
-			kvGB := models.KVCacheGB(arch, paramsB, ctxSize)
-			if kvGB == 0 {
-				kvGB = 1.0
-			}
-			total := sizeGB + kvGB
-			row := fitRow{Repo: hit.ID, Quant: q, SizeGB: sizeGB, Downloads: hit.Downloads, Likes: hit.Likes}
-			switch {
-			case usable-total >= fitHeadroomGB:
-				row.Verdict = "ok"
-				row.FreeGB = usable - total
-				row.Note = fmt.Sprintf("%.0f GB free", row.FreeGB)
-			case usable >= total:
-				row.Verdict = "tight"
-				row.FreeGB = usable - total
-				row.Note = "tight headroom"
-			default:
-				row.Verdict = "too-big"
-				row.DeficitGB = total - usable
-				row.Note = fmt.Sprintf("need %.0f GB more", row.DeficitGB)
-			}
-			rows = append(rows, row)
-		}
+		}(hit)
+	}
+	wg.Wait()
+	if showProg {
+		// Clear the progress line so the table output below isn't preceded
+		// by leftover spinner text.
+		fmt.Fprintf(d.Stderr, "\r%*s\r", 60, "")
 	}
 
 	if len(rows) == 0 {
