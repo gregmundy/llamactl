@@ -6,7 +6,66 @@ import (
 	"net/http/httptest"
 	"testing"
 	"time"
+
+	"github.com/gregmundy/llamactl/internal/config"
 )
+
+// TestResolveHFToken pins the precedence and the previously-broken
+// config-path branch that motivated v1.4.4. Before this release,
+// `llamactl config set hf_token <X>` persisted the value but main.go
+// never read it; only env vars worked. The "config only" subtest is the
+// regression assertion for that bug.
+func TestResolveHFToken(t *testing.T) {
+	cases := []struct {
+		name string
+		env  map[string]string
+		cfg  *config.Config
+		want string
+	}{
+		{
+			name: "nothing set returns empty",
+			env:  map[string]string{},
+			cfg:  &config.Config{},
+			want: "",
+		},
+		{
+			name: "config only (the v1.4.4 fix)",
+			env:  map[string]string{},
+			cfg:  &config.Config{HFToken: "hf_from_config"},
+			want: "hf_from_config",
+		},
+		{
+			name: "HF_TOKEN env wins over config",
+			env:  map[string]string{"HF_TOKEN": "hf_from_env"},
+			cfg:  &config.Config{HFToken: "hf_from_config"},
+			want: "hf_from_env",
+		},
+		{
+			name: "LLAMACTL_HF_TOKEN wins over HF_TOKEN env",
+			env: map[string]string{
+				"HF_TOKEN":          "hf_generic",
+				"LLAMACTL_HF_TOKEN": "hf_llamactl",
+			},
+			cfg:  &config.Config{HFToken: "hf_from_config"},
+			want: "hf_llamactl",
+		},
+		{
+			name: "nil cfg is safe",
+			env:  map[string]string{},
+			cfg:  nil,
+			want: "",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			getenv := func(k string) string { return tc.env[k] }
+			got := resolveHFToken(getenv, tc.cfg)
+			if got != tc.want {
+				t.Errorf("resolveHFToken = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
 
 // TestHFHTTPClientResponseHeaderTimeout verifies hfHTTPClient's transport-
 // level ResponseHeaderTimeout actually kicks in when an upstream stalls
