@@ -703,6 +703,7 @@ The PRD called out the following as **out of scope** for v1. Re-elevation in lat
 | v1.3.0 | 2026-05-12 | `update` + `config` commands. Opt-in endpoint auth via `api_key`. ParamsB `int → float64` migration for sub-1B precision. 13 backlog items. |
 | v1.4.0 | 2026-05-12 | Speculative decoding (`--draft`, `fit --speculative`). GGUF tensor-shape parser fallback (closes the `?` ParamsB hole for supported arches). |
 | v1.4.1 | 2026-05-12 | Cleanup: exported speculative thresholds, dropped `ArchMistral`, `list` self-heals legacy Arch strings, `fit` 60/40 dedupe bucketing. |
+| v1.4.2 | 2026-05-12 | Hotfix: `fit` no longer hangs when an HF API response stalls. Added transport-level `ResponseHeaderTimeout` (30 s) to the HTTP client. Downloads unaffected (no global `Timeout`). |
 
 ---
 
