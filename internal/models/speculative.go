@@ -20,12 +20,21 @@ type PairVerdict struct {
 	ArchMatch     bool
 }
 
-// Speculative-decoding constants.
+// Speculative-decoding constants. Exported so fit.go (and other future
+// callers in `cli`) can reference the same thresholds SpeculativePair uses,
+// preventing silent drift between validation and display logic.
 const (
-	speculativeMinRatio      = 2.0  // below this: draft is too close to main, no speedup
-	speculativeWarnLowRatio  = 5.0  // below this: warn (overhead may eat speedup)
-	speculativeWarnHighRatio = 15.0 // above this: warn (draft too small, alignment poor)
-	speculativeHeadroomGB    = 4.0  // same as fit's headroom
+	SpeculativeMinRatio      = 2.0  // below this: draft is too close to main, no speedup
+	SpeculativeWarnLowRatio  = 5.0  // below this: warn (overhead may eat speedup)
+	SpeculativeWarnHighRatio = 15.0 // above this: warn (draft too small, alignment poor)
+	SpeculativeHeadroomGB    = 4.0  // same as fit's headroom
+
+	// SpeculativeIdealRatio is the sweet spot for speculative decoding
+	// speedup per llama.cpp guidance — draft about 7-8× smaller than main
+	// tends to maximize accepted-token throughput. fit --speculative sorts
+	// candidates by |SizeRatio - SpeculativeIdealRatio| so the closest fit
+	// rises to the top of the table.
+	SpeculativeIdealRatio = 7.5
 )
 
 // SpeculativePair returns the verdict for using draft as the speculative-
@@ -34,12 +43,12 @@ const (
 // Refusal conditions (Ok=false):
 //   - main.ParamsB <= 0 or draft.ParamsB <= 0 (size unknown)
 //   - draft.Arch != main.Arch (tokenizer compatibility cannot be assumed)
-//   - SizeRatio < speculativeMinRatio (no speedup possible)
-//   - CombinedRAMGB > GpuAddressableGB(hw) - speculativeHeadroomGB (too-big)
+//   - SizeRatio < SpeculativeMinRatio (no speedup possible)
+//   - CombinedRAMGB > GpuAddressableGB(hw) - SpeculativeHeadroomGB (too-big)
 //
 // Warning conditions (Ok=true, Reason non-empty):
-//   - SizeRatio < speculativeWarnLowRatio (overhead may exceed speedup)
-//   - SizeRatio > speculativeWarnHighRatio (alignment likely poor)
+//   - SizeRatio < SpeculativeWarnLowRatio (overhead may exceed speedup)
+//   - SizeRatio > SpeculativeWarnHighRatio (alignment likely poor)
 func SpeculativePair(main, draft Model, hw hardware.Info, recipe string) PairVerdict {
 	v := PairVerdict{
 		ArchMatch: main.Arch == draft.Arch,
@@ -57,9 +66,9 @@ func SpeculativePair(main, draft Model, hw hardware.Info, recipe string) PairVer
 	}
 
 	v.SizeRatio = main.ParamsB / draft.ParamsB
-	if v.SizeRatio < speculativeMinRatio {
+	if v.SizeRatio < SpeculativeMinRatio {
 		v.Reason = fmt.Sprintf("size ratio %.1f× too small (draft must be at least %.0f× smaller than main)",
-			v.SizeRatio, speculativeMinRatio)
+			v.SizeRatio, SpeculativeMinRatio)
 		return v
 	}
 
@@ -69,7 +78,7 @@ func SpeculativePair(main, draft Model, hw hardware.Info, recipe string) PairVer
 		KVCacheGB(main.Arch, main.ParamsB, ctx) + KVCacheGB(draft.Arch, draft.ParamsB, ctx)
 
 	usable := GpuAddressableGB(hw)
-	budget := usable - speculativeHeadroomGB
+	budget := usable - SpeculativeHeadroomGB
 	if v.CombinedRAMGB > budget {
 		v.Reason = fmt.Sprintf("combined weights + KV cache (%.1f GB) exceeds usable RAM (%.1f GB); free %.1f GB or pick a smaller draft",
 			v.CombinedRAMGB, budget, v.CombinedRAMGB-budget)
@@ -78,9 +87,9 @@ func SpeculativePair(main, draft Model, hw hardware.Info, recipe string) PairVer
 
 	v.Ok = true
 	switch {
-	case v.SizeRatio < speculativeWarnLowRatio:
+	case v.SizeRatio < SpeculativeWarnLowRatio:
 		v.Reason = fmt.Sprintf("size ratio %.1f× below recommended 5-15× (overhead may eat speedup)", v.SizeRatio)
-	case v.SizeRatio > speculativeWarnHighRatio:
+	case v.SizeRatio > SpeculativeWarnHighRatio:
 		v.Reason = fmt.Sprintf("size ratio %.1f× above recommended 5-15× (draft alignment may be poor)", v.SizeRatio)
 	}
 	return v

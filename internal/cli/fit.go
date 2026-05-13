@@ -266,11 +266,12 @@ func runFitSpeculative(ctx context.Context, d *Deps, mainID string, limit int) e
 			continue // omit arch-mismatches entirely (noise, not a candidate)
 		}
 		v := "ok"
-		if !verdict.Ok {
+		switch {
+		case !verdict.Ok:
 			v = "refused"
-		} else if verdict.SizeRatio < 5.0 {
+		case verdict.SizeRatio < models.SpeculativeWarnLowRatio:
 			v = "ratio-low"
-		} else if verdict.SizeRatio > 15.0 {
+		case verdict.SizeRatio > models.SpeculativeWarnHighRatio:
 			v = "ratio-high"
 		}
 		rows = append(rows, specRow{
@@ -291,8 +292,9 @@ func runFitSpeculative(ctx context.Context, d *Deps, mainID string, limit int) e
 		return nil
 	}
 
-	// Sort: Ok rows first (sorted by |SizeRatio - 7.5| ascending — closest
-	// to the ideal 5-15× midpoint rises first), then !Ok rows by Reason.
+	// Sort: Ok rows first (sorted by |SizeRatio - SpeculativeIdealRatio|
+	// ascending — closest to the sweet spot rises first), then !Ok rows by
+	// Reason.
 	sort.SliceStable(rows, func(i, j int) bool {
 		ai := rows[i].Verdict == "refused"
 		aj := rows[j].Verdict == "refused"
@@ -300,8 +302,8 @@ func runFitSpeculative(ctx context.Context, d *Deps, mainID string, limit int) e
 			return !ai
 		}
 		if !ai {
-			di := math.Abs(rows[i].SizeRatio - 7.5)
-			dj := math.Abs(rows[j].SizeRatio - 7.5)
+			di := math.Abs(rows[i].SizeRatio - models.SpeculativeIdealRatio)
+			dj := math.Abs(rows[j].SizeRatio - models.SpeculativeIdealRatio)
 			return di < dj
 		}
 		return rows[i].Reason < rows[j].Reason
