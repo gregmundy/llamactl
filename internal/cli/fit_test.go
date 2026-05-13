@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/gregmundy/llamactl/internal/hardware"
 	"github.com/gregmundy/llamactl/internal/hf"
@@ -302,6 +303,49 @@ func TestFitDedupesRepoFirstThenAlternates(t *testing.T) {
 	}
 	if !strings.Contains(s, "beta/qwen-GGUF") {
 		t.Fatalf("beta repo missing from top 3 — dedupe didn't push it up:\n%s", s)
+	}
+}
+
+// TestFitParallelizesRepoInfo verifies the RepoInfo loop runs concurrently:
+// 8 hits each with a 200ms RepoInfo delay should finish in ~200ms (parallel)
+// rather than ~1.6s (serial). The exact cap matches fitRepoInfoConcurrency.
+func TestFitParallelizesRepoInfo(t *testing.T) {
+	var hits []hf.SearchHit
+	repos := map[string]hf.Repo{}
+	for i := 0; i < 8; i++ {
+		id := fmt.Sprintf("user%d/qwen-GGUF", i)
+		hits = append(hits, hf.SearchHit{ID: id, Downloads: 1000 - i})
+		repos[id] = hf.Repo{Siblings: []hf.File{
+			{RFilename: "model-Q4_K_M.gguf", LFS: &hf.LFSInfo{Size: 2 << 30, SHA256: fmt.Sprintf("%d", i)}},
+		}}
+	}
+	d := buildFitTestDeps(t, hits, repos, hardware.Info{RAMBytes: 32 << 30})
+	// 200ms per RepoInfo call. With 8 concurrent workers and 8 hits,
+	// wall time should be ~200ms (the slowest single request). Serial
+	// would be ~1.6s; we assert a generous 800ms ceiling so a slow CI
+	// runner doesn't false-positive.
+	d.HFClient.(*fitFakeHFClient).inner.RepoInfoDelay = 200 * time.Millisecond
+
+	var out bytes.Buffer
+	d.Stdout = &out
+	cmd := newFitCmd(d)
+	cmd.SetArgs([]string{"qwen"})
+
+	start := time.Now()
+	if err := cmd.ExecuteContext(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	elapsed := time.Since(start)
+	if elapsed > 800*time.Millisecond {
+		t.Errorf("fit took %s with 8 × 200ms delays; expected <800ms via parallelism", elapsed)
+	}
+	t.Logf("fit completed in %s (parallelism working)", elapsed)
+	// Sanity: all 8 repos surfaced in the output.
+	for i := 0; i < 8; i++ {
+		id := fmt.Sprintf("user%d/qwen-GGUF", i)
+		if !strings.Contains(out.String(), id) {
+			t.Errorf("expected %s in output (would indicate it was processed)", id)
+		}
 	}
 }
 
