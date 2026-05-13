@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"path/filepath"
 	"strings"
@@ -301,6 +302,50 @@ func TestFitDedupesRepoFirstThenAlternates(t *testing.T) {
 	}
 	if !strings.Contains(s, "beta/qwen-GGUF") {
 		t.Fatalf("beta repo missing from top 3 — dedupe didn't push it up:\n%s", s)
+	}
+}
+
+// With a deep alternates pool and a large --limit, the 60/40 bucketing
+// reserves slots for alternate quants of the top repos so users can compare
+// Q5/Q4/IQ3 variants without scrolling past unrelated repos. 10 repos with
+// 2 quants each + --limit 10:
+//   - Old behavior: 10 primaries, 0 alternates → 10 unique repos
+//   - New 60/40: 6 primaries (60%) + 4 alternates (40%) → 6 unique repos
+func TestFitBucketingPreservesAlternatesAtLargerLimit(t *testing.T) {
+	var hits []hf.SearchHit
+	repos := map[string]hf.Repo{}
+	for i := 0; i < 10; i++ {
+		id := fmt.Sprintf("user%d/qwen-GGUF", i)
+		hits = append(hits, hf.SearchHit{ID: id, Downloads: 1000 - i})
+		repos[id] = hf.Repo{Siblings: []hf.File{
+			{RFilename: "model-Q5_K_M.gguf", LFS: &hf.LFSInfo{Size: 3 << 30, SHA256: fmt.Sprintf("%dh", i)}},
+			{RFilename: "model-Q4_K_M.gguf", LFS: &hf.LFSInfo{Size: 2 << 30, SHA256: fmt.Sprintf("%dl", i)}},
+		}}
+	}
+	d := buildFitTestDeps(t, hits, repos, hardware.Info{RAMBytes: 32 << 30})
+	var out bytes.Buffer
+	d.Stdout = &out
+	cmd := newFitCmd(d)
+	cmd.SetArgs([]string{"qwen", "--limit", "10"})
+	if err := cmd.ExecuteContext(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	s := out.String()
+	// Count unique repos in the output. Each repo's name appears at least
+	// once per row that references it.
+	unique := map[string]bool{}
+	for i := 0; i < 10; i++ {
+		id := fmt.Sprintf("user%d/qwen-GGUF", i)
+		if strings.Contains(s, id) {
+			unique[id] = true
+		}
+	}
+	// With 60/40 bucketing, we expect 6 unique repos in the table (the 6
+	// primaries), not all 10. The remaining 4 slots are alternates of the
+	// top 4 repos.
+	if len(unique) != 6 {
+		t.Errorf("expected 6 unique repos under 60/40 bucketing; got %d\noutput:\n%s",
+			len(unique), s)
 	}
 }
 

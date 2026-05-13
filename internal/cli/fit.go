@@ -149,10 +149,18 @@ func runFit(ctx context.Context, d *Deps, query string, install bool, ctxSize, l
 		return fitRank(rows[i]) > fitRank(rows[j])
 	})
 
-	// Per-repo dedupe: show the best quant of each repo before showing alternate
-	// quants of any repo. Within each group (primary / alternates) the relative
-	// sort order is preserved so popularity-weighting still determines which repo
-	// surfaces first.
+	// Per-repo dedupe with 60/40 bucketing.
+	//
+	// The best quant of each repo (primary) appears before any alternate
+	// quant. Within each group the relative sort order is preserved so
+	// popularity-weighting still determines which repo surfaces first.
+	//
+	// When --limit is small (< 5), primaries fill the whole table — users
+	// looking at a short summary want repo diversity over quant variety.
+	// When --limit is larger, reserve ~40% of slots for alternates of the
+	// already-surfaced top repos so users can compare Q5/Q4/IQ3 variants
+	// without scrolling past unrelated repos. If either bucket has fewer
+	// candidates than its share, the other bucket absorbs the slack.
 	seen := make(map[string]bool, len(rows))
 	primary := make([]fitRow, 0, len(rows))
 	alternates := make([]fitRow, 0, len(rows))
@@ -164,10 +172,32 @@ func runFit(ctx context.Context, d *Deps, query string, install bool, ctxSize, l
 			alternates = append(alternates, r)
 		}
 	}
-	rows = append(primary, alternates...)
 
-	if len(rows) > limit {
-		rows = rows[:limit]
+	if limit >= 5 && len(alternates) > 0 {
+		primaryQuota := limit * 60 / 100
+		if primaryQuota < 1 {
+			primaryQuota = 1
+		}
+		altQuota := limit - primaryQuota
+		// Absorb slack: if either side has fewer rows than its quota,
+		// give the surplus to the other side.
+		if len(primary) < primaryQuota {
+			altQuota += primaryQuota - len(primary)
+			primaryQuota = len(primary)
+		}
+		if len(alternates) < altQuota {
+			primaryQuota += altQuota - len(alternates)
+			altQuota = len(alternates)
+			if primaryQuota > len(primary) {
+				primaryQuota = len(primary)
+			}
+		}
+		rows = append(primary[:primaryQuota], alternates[:altQuota]...)
+	} else {
+		rows = append(primary, alternates...)
+		if len(rows) > limit {
+			rows = rows[:limit]
+		}
 	}
 
 	if install {
