@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net"
+	"net/http"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -22,6 +24,33 @@ import (
 	"github.com/gregmundy/llamactl/internal/runner"
 	"github.com/gregmundy/llamactl/internal/server"
 )
+
+// hfHTTPClient returns the *http.Client used for every HF API + download
+// request. Transport-level timeouts protect against indefinite hangs when
+// the upstream is slow or unreachable, without capping body-read duration
+// (so multi-GB GGUF downloads are not artificially time-bounded).
+//
+//   - DialContext.Timeout: how long to wait for TCP connection setup
+//   - TLSHandshakeTimeout: how long to wait for TLS negotiation
+//   - ResponseHeaderTimeout: how long to wait between sending the request
+//     and receiving the response headers. This is the key fix — without
+//     it, a single hanging HF response stalls `fit` indefinitely.
+//   - IdleConnTimeout: how long to keep idle keep-alive connections open
+//
+// http.Client.Timeout itself is left unset because it covers the full
+// request including body read; setting it would kill ongoing GGUF
+// downloads at the timeout, not just stuck headers.
+func hfHTTPClient() *http.Client {
+	transport := &http.Transport{
+		DialContext: (&net.Dialer{
+			Timeout: 10 * time.Second,
+		}).DialContext,
+		TLSHandshakeTimeout:   10 * time.Second,
+		ResponseHeaderTimeout: 30 * time.Second,
+		IdleConnTimeout:       90 * time.Second,
+	}
+	return &http.Client{Transport: transport}
+}
 
 var llamactlVersion = "dev"
 
@@ -65,7 +94,7 @@ func main() {
 
 	// Phase 2: wire HFClient, Downloader, QuantSelector, ModelStore
 	hfCache := hf.NewCache(paths.CacheDir())
-	hfClient := hf.NewClient("https://huggingface.co", hfCache, nil)
+	hfClient := hf.NewClient("https://huggingface.co", hfCache, hfHTTPClient())
 	if tok := firstNonEmptyEnv("LLAMACTL_HF_TOKEN", "HF_TOKEN"); tok != "" {
 		hfClient = hfClient.WithToken(tok)
 	}
