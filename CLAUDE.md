@@ -28,7 +28,7 @@ internal/hf/                 HuggingFace API client (search/repo info/range fetc
 internal/launchd/            Plist render + launchctl wrapper
 internal/models/             PreferredIDs, Arch constants, quant selector, SpeculativePair
 internal/proc/               Port allocation + ps/etime parsing
-internal/recipes/            chat/code/long-context/low-memory flag bundles
+internal/recipes/            chat/code/long-context/low-memory/agent flag bundles
 internal/runner/             os/exec seam
 internal/server/             llama-server version + capability probe
 docs/MANUAL.md               User-facing manual (PM sign-off doc)

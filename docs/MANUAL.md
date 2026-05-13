@@ -292,7 +292,7 @@ The detached path writes `~/Library/LaunchAgents/com.llamactl.<model-id>.plist`,
 
 **Flags:**
 - `--port <int>` — TCP port (default 8080). If occupied, llamactl scans `[port, port+100)` for a free one.
-- `--recipe <name>` — `chat` / `code` / `long-context` / `low-memory` (default `chat`). See §5.
+- `--recipe <name>` — `chat` / `code` / `long-context` / `low-memory` / `agent` (default `chat`). See §5.
 - `--detach` — register as a launchd service and return.
 - `--draft <id>` — draft model id for speculative decoding (must be installed). See §9.
 
@@ -420,7 +420,7 @@ Non-Homebrew installs (e.g., `go install`) print a helpful message and exit 0 wi
 
 ## 5. Recipes
 
-A recipe is a named tuning bundle that maps to `llama-server` flags. Four ship with v1:
+A recipe is a named tuning bundle that maps to `llama-server` flags. Five ship as of v1.4.5:
 
 | Recipe | Context | KV cache K/V | Mlock policy | Intended for |
 |---|---|---|---|---|
@@ -428,6 +428,7 @@ A recipe is a named tuning bundle that maps to `llama-server` flags. Four ship w
 | `code` | 16 384 | f16 / f16 | auto | Code assistance; doubled context |
 | `long-context` | 32 768 | q8_0 / q8_0 | auto | RAG, long-document QA; quantized KV for footprint |
 | `low-memory` | 4 096 | q4_0 / q4_0 | off | Constrained hosts (8 GB hosts); aggressive KV quantization |
+| `agent` | 8 192 | f16 / f16 | auto | Deterministic, non-interactive utility workloads (summarize / extract / classify / rewrite / agent offload) |
 
 **Mlock auto** adds `--mlock` when usable RAM is at least 4 GB greater than the model's weight size. **Mlock off** never adds `--mlock` regardless of headroom (used by `low-memory`).
 
@@ -437,6 +438,22 @@ The recipe also drives:
 - Max context clamping (recipe ctx clamped against the model family's MaxCtx).
 
 Recipes are pure-function over the main model only — speculative decoding's `--draft` is appended post-recipe in `serve.go` and does not require its own recipe variant.
+
+### `agent` recipe — additional flags
+
+`agent` pins sampling and reasoning behavior at server startup so output is deterministic and reasoning-capable models don't burn the generation budget on internal thinking.
+
+| Flag | Value | Why |
+|---|---|---|
+| `--temp` | `0` | Deterministic output; repeatable across identical prompts |
+| `--top-p` | `1.0` | No nucleus filter; let `temp 0` do the work |
+| `--top-k` | `0` | Disabled |
+| `--predict` | `2048` | Bounded generation; bounded enough to fail-fast on runaway, generous enough for rich outputs |
+| `--reasoning` | `off` | Disables thinking server-wide on reasoning-capable models (Qwen3, DeepSeek-R1, etc.). Without this, those models can spend their entire generation budget inside `<think>` blocks and return empty `content`. |
+
+Callers can override any of these per-request via the OpenAI chat-completions body fields (`temperature`, `top_p`, `max_tokens`). Recipe settings are *defaults*, not enforcements.
+
+Pair `agent` with a small fast model (e.g. `qwen2.5-3b-instruct`, `qwen3-1.7b`) for offload duty. Larger models work fine too but the recipe was tuned around sub-3B utility workloads.
 
 ---
 
