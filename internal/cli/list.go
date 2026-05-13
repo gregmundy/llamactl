@@ -40,7 +40,7 @@ func runList(ctx context.Context, d *Deps) error {
 		// re-parse the header and write back any values that were missing.
 		if m.ParamsB == 0 && m.GGUFPath != "" {
 			if _, statErr := os.Stat(m.GGUFPath); statErr == nil {
-				if h, perr := gguf.ReadHeader(m.GGUFPath); perr == nil {
+				if h, perr := gguf.ReadHeaderWithTensors(m.GGUFPath); perr == nil {
 					changed := false
 					if h.ParamsCount > 0 {
 						m.ParamsB = float64(h.ParamsCount) / 1e9

@@ -28,6 +28,7 @@ type Header struct {
 	Architecture  string // general.architecture
 	ParamsCount   uint64 // general.parameter_count
 	ContextLength uint64 // <Architecture>.context_length; 0 if absent
+	BlockCount    int    // <arch>.block_count; 0 if absent
 }
 
 // GGUF value type codes (subset). Source: GGUF v3 spec.
@@ -170,6 +171,30 @@ func parseHeader(r io.Reader) (Header, error) {
 		}
 	}
 
+	if h.Architecture != "" {
+		wantKey := h.Architecture + ".block_count"
+		for _, kv := range entries {
+			if kv.key != wantKey {
+				continue
+			}
+			switch v := kv.value.(type) {
+			case uint32:
+				h.BlockCount = int(v)
+			case uint64:
+				h.BlockCount = int(v)
+			case int32:
+				if v >= 0 {
+					h.BlockCount = int(v)
+				}
+			case int64:
+				if v >= 0 {
+					h.BlockCount = int(v)
+				}
+			}
+			break
+		}
+	}
+
 	return h, nil
 }
 
@@ -202,6 +227,84 @@ func parseSizeLabel(s string) uint64 {
 		return 0
 	}
 	return uint64(n * mult)
+}
+
+// ReadHeaderWithTensors is ReadHeader plus a best-effort tensor-info walk
+// when the kv-block paths leave ParamsCount=0. Walks tensor descriptors
+// looking for "token_embd.weight"; on hit, computes paramsB via
+// paramsBFromTokenEmbd[arch] (defined in params_arch.go) and updates
+// ParamsCount. Returns early after the hit. On any walk error, returns the
+// kv-block-derived header unchanged — never aborts.
+func ReadHeaderWithTensors(path string) (Header, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return Header{}, err
+	}
+	defer f.Close()
+	return parseHeaderWithTensors(io.LimitReader(f, readLimit))
+}
+
+func parseHeaderWithTensors(r io.Reader) (Header, error) {
+	br := bufio.NewReader(r)
+	h, err := parseHeader(br)
+	if err != nil {
+		return h, err
+	}
+	if h.ParamsCount > 0 {
+		return h, nil // kv-block already filled it; skip the walk
+	}
+	if h.TensorCount == 0 {
+		return h, nil // nothing to walk
+	}
+	// Cap the walk so a corrupted tensor_count doesn't drive us off a cliff.
+	const maxTensors = 100_000
+	walkCount := h.TensorCount
+	if walkCount > maxTensors {
+		walkCount = maxTensors
+	}
+	for i := uint64(0); i < walkCount; i++ {
+		name, err := readString(br)
+		if err != nil {
+			return h, nil // ran past available data; leave ParamsCount=0
+		}
+		var nDims uint32
+		if err := binary.Read(br, binary.LittleEndian, &nDims); err != nil {
+			return h, nil
+		}
+		if nDims > 8 { // sanity cap on dimensions
+			return h, nil
+		}
+		dims := make([]uint64, nDims)
+		for j := range dims {
+			if err := binary.Read(br, binary.LittleEndian, &dims[j]); err != nil {
+				return h, nil
+			}
+		}
+		var tensorType uint32
+		if err := binary.Read(br, binary.LittleEndian, &tensorType); err != nil {
+			return h, nil
+		}
+		var offset uint64
+		if err := binary.Read(br, binary.LittleEndian, &offset); err != nil {
+			return h, nil
+		}
+		if name == "token_embd.weight" {
+			// GGUF stores token_embd.weight as [hidden_dim, vocab_size].
+			if len(dims) < 2 {
+				return h, nil
+			}
+			hiddenDim := int(dims[0])
+			vocabSize := int(dims[1])
+			if formula, ok := paramsBFromTokenEmbd[h.Architecture]; ok && formula != nil {
+				paramsB := formula(hiddenDim, vocabSize, h.BlockCount)
+				if paramsB > 0 {
+					h.ParamsCount = uint64(paramsB * 1e9)
+				}
+			}
+			return h, nil
+		}
+	}
+	return h, nil
 }
 
 func readString(r io.Reader) (string, error) {

@@ -1,5 +1,13 @@
 # llamactl — PRD v1.5
 
+## Version history
+
+| Version | Date       | Highlights                                                                          |
+|---------|------------|-------------------------------------------------------------------------------------|
+| v1.0    | 2025       | MVP: add, serve, status, stop, doctor, hardware, search, fit, list, remove, cache   |
+| v1.3.0  | 2026-05-12 | update + config + auth (api_key) + 13 backlog items                                 |
+| v1.4.0  | 2026-05-12 | Speculative decoding (--draft on serve, --speculative on fit) + GGUF parser fallback |
+
 ## Summary
 
 A single-binary CLI that handles the boilerplate of running llama.cpp on
@@ -55,7 +63,7 @@ This tool compresses it to one command per phase.
 - Authentication on the endpoint (relies on Tailscale for access control) — **elevated to opt-in feature in v1.3.0 via `api_key`; see §Authentication in README**
 - Local quantization conversion (download pre-quantized only)
 - Telemetry, usage analytics, update notifications
-- Speculative decoding auto-config
+- Speculative decoding auto-config — **elevated to shipped feature in v1.4.0 via `serve --draft` and `fit --speculative`**
 - Hot model swapping
 - Hard dependency on llamavm or any specific llama.cpp install method
 
@@ -180,12 +188,27 @@ llamactl remove <model-id> [--purge]
   Removes llamactl metadata. With --purge, also deletes the shared
   GGUF file after best-effort check for use by other tools.
 
-llamactl serve <model-id> [--port <int>] [--recipe <name>] [--detach]
+llamactl fit <query> [--install] [--speculative <main-model-id>]
+  Ranks HuggingFace GGUF variants by fit on this host. With --install,
+  downloads the top-ranked variant automatically.
+  --speculative <main-model-id>: instead of searching HuggingFace, lists
+    already-installed models that share the main model's architecture,
+    sorted by closest fit to the ideal 5-15× size ratio. Outputs a table
+    of DRAFT ID, ARCH, PARAMSB, RATIO, COMBINED RAM, and VERDICT (ok /
+    ratio-high / ratio-low). Does not download anything.
+
+llamactl serve <model-id> [--port <int>] [--recipe <name>] [--detach] [--draft <draft-model-id>]
   Starts llama-server (resolved per discovery order) with hardware-tuned
   flags. Default port 8080, default recipe chat.
   Recipes: chat, code, long-context, low-memory.
   --detach: registers a launchd LaunchAgent and returns. Otherwise
             foreground.
+  --draft <draft-model-id>: enables speculative decoding. The draft model
+    must be already installed via `add`. Architecture must match the main
+    model; mismatched architectures are refused. Size ratios outside 5-15×
+    warn but proceed. Passes --model-draft and --ctx-size-draft to
+    llama-server. With --detach, the pairing is embedded in the LaunchAgent
+    plist and persists across reboots; re-running without --draft clears it.
   Endpoint: http://0.0.0.0:<port>/v1/* (OpenAI-compatible, native to
   llama-server).
 
@@ -401,7 +424,6 @@ following hold:
 - Multi-platform binary distribution
 - Local quantization pipeline (pull original weights, convert, quantize
   via dedicated subcommand; brings Python toolchain dependency)
-- Speculative decoding auto-config
 - Web UI for management
 - Authentication on endpoint
 - Performance benchmarking and reporting

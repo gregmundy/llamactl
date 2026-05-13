@@ -157,3 +157,59 @@ func TestPortFor(t *testing.T) {
 		t.Errorf("PortFor missing: got %d, want 0", got)
 	}
 }
+
+func TestHasDraftFindsEmbeddedPath(t *testing.T) {
+	dir := t.TempDir()
+	label := "com.llamactl.qwen2.5-32b-instruct"
+	plist := `<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/usr/local/bin/llama-server</string>
+    <string>--model</string>
+    <string>/Users/greg/.local/share/llama-models/qwen2.5-32b-instruct/Q4_K_M.gguf</string>
+    <string>--model-draft</string>
+    <string>/Users/greg/.local/share/llama-models/qwen2.5-3b-instruct/Q4_K_M.gguf</string>
+    <string>--ctx-size-draft</string>
+    <string>8192</string>
+  </array>
+</dict>
+</plist>`
+	if err := os.WriteFile(filepath.Join(dir, label+".plist"), []byte(plist), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	path, ok := HasDraft(dir, label)
+	if !ok {
+		t.Fatalf("expected HasDraft to return ok=true")
+	}
+	want := "/Users/greg/.local/share/llama-models/qwen2.5-3b-instruct/Q4_K_M.gguf"
+	if path != want {
+		t.Errorf("HasDraft path = %q, want %q", path, want)
+	}
+}
+
+func TestHasDraftAbsent(t *testing.T) {
+	dir := t.TempDir()
+	label := "com.llamactl.no-draft"
+	plist := `<plist><dict><key>ProgramArguments</key><array>
+    <string>/usr/local/bin/llama-server</string>
+    <string>--model</string>
+    <string>/path/main.gguf</string>
+    </array></dict></plist>`
+	if err := os.WriteFile(filepath.Join(dir, label+".plist"), []byte(plist), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	path, ok := HasDraft(dir, label)
+	if ok || path != "" {
+		t.Errorf("HasDraft = (%q, %v), want (\"\", false)", path, ok)
+	}
+}
+
+func TestHasDraftMissingPlist(t *testing.T) {
+	path, ok := HasDraft(t.TempDir(), "com.llamactl.does-not-exist")
+	if ok || path != "" {
+		t.Errorf("HasDraft on missing plist = (%q, %v), want (\"\", false)", path, ok)
+	}
+}

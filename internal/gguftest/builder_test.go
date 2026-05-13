@@ -49,3 +49,19 @@ func TestBuildRawTypeOnly(t *testing.T) {
 		t.Fatalf("len=%d, want 45", len(b))
 	}
 }
+
+func TestBuildWithTensors(t *testing.T) {
+	raw := BuildWithTensors(t, 3,
+		[]Tensor{
+			{Name: "token_embd.weight", Dims: []uint64{3584, 152064}, Type: 0, Offset: 0},
+			{Name: "blk.0.attn_norm.weight", Dims: []uint64{3584}, Type: 0, Offset: 0},
+		},
+		KV{Key: "general.architecture", Type: TypeString, Value: "qwen2"},
+	)
+
+	// tensor_count is at offset 4 (magic) + 4 (version) = 8, u64 = 8 bytes
+	tensorCount := binary.LittleEndian.Uint64(raw[8:16])
+	if tensorCount != 2 {
+		t.Fatalf("tensor_count = %d, want 2", tensorCount)
+	}
+}

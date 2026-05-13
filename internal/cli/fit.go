@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"math"
 	"regexp"
 	"sort"
 	"strings"
@@ -44,11 +45,15 @@ func newFitCmd(d *Deps) *cobra.Command {
 	var ctxSize int
 	var limit int
 	var asJSON bool
+	var speculative bool
 	cmd := &cobra.Command{
 		Use:   "fit <query...>",
 		Short: "Search HF and rank GGUF variants by fit on this host",
 		Args:  cobra.MinimumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if speculative {
+				return runFitSpeculative(cmd.Context(), d, strings.Join(args, " "), limit)
+			}
 			return runFit(cmd.Context(), d, strings.Join(args, " "), install, ctxSize, limit, asJSON)
 		},
 	}
@@ -56,6 +61,7 @@ func newFitCmd(d *Deps) *cobra.Command {
 	cmd.Flags().IntVar(&ctxSize, "ctx", fitDefaultCtx, "context size for KV-cache estimation")
 	cmd.Flags().IntVar(&limit, "limit", 10, "cap rows shown")
 	cmd.Flags().BoolVar(&asJSON, "json", false, "emit JSON instead of a table")
+	cmd.Flags().BoolVar(&speculative, "speculative", false, "list installed draft candidates for the named main model")
 	return cmd
 }
 
@@ -208,4 +214,123 @@ func renderFitTable(w io.Writer, rows []fitRow) error {
 		fmt.Fprintf(tw, "%s\t%s\t%s\t%.1f GB\t%s\t%s\n", sym, r.Repo, r.Quant, r.SizeGB, r.Verdict, r.Note)
 	}
 	return tw.Flush()
+}
+
+// specRow is a fit row in speculative mode. The column meanings differ from
+// the main `fitRow` shape but the verdict semantics come from
+// models.SpeculativePair.
+type specRow struct {
+	DraftID       string  `json:"draft_id"`
+	Arch          string  `json:"arch"`
+	ParamsB       float64 `json:"params_b"`
+	SizeRatio     float64 `json:"size_ratio"`
+	CombinedRAMGB float64 `json:"combined_ram_gb"`
+	Verdict       string  `json:"verdict"` // "ok", "ratio-low", "ratio-high", "refused"
+	Reason        string  `json:"reason,omitempty"`
+}
+
+// runFitSpeculative is the --speculative branch of `llamactl fit`. The
+// positional arg is the MAIN model id; candidates come from ModelStore.List.
+func runFitSpeculative(ctx context.Context, d *Deps, mainID string, limit int) error {
+	mainMeta, err := d.ModelStore.Get(ctx, mainID)
+	if err != nil {
+		return fmt.Errorf("%w: main model %q is not installed; run `llamactl add %s` first",
+			ErrUserError, mainID, mainID)
+	}
+	hw, err := ensureHardware(ctx, d)
+	if err != nil {
+		return err
+	}
+
+	mainModel := models.Model{
+		ID: mainMeta.ID, HFRepo: mainMeta.Repo, Arch: mainMeta.Arch,
+		ParamsB: mainMeta.ParamsB, MaxCtx: lookupMaxCtx(mainMeta),
+	}
+
+	all, err := d.ModelStore.List(ctx)
+	if err != nil {
+		return fmt.Errorf("list installed models: %w", err)
+	}
+
+	var rows []specRow
+	for _, candidate := range all {
+		if candidate.ID == mainMeta.ID {
+			continue // can't draft yourself
+		}
+		draftModel := models.Model{
+			ID: candidate.ID, HFRepo: candidate.Repo, Arch: candidate.Arch,
+			ParamsB: candidate.ParamsB, MaxCtx: lookupMaxCtx(candidate),
+		}
+		verdict := models.SpeculativePair(mainModel, draftModel, hw, "chat")
+		if !verdict.ArchMatch {
+			continue // omit arch-mismatches entirely (noise, not a candidate)
+		}
+		v := "ok"
+		if !verdict.Ok {
+			v = "refused"
+		} else if verdict.SizeRatio < 5.0 {
+			v = "ratio-low"
+		} else if verdict.SizeRatio > 15.0 {
+			v = "ratio-high"
+		}
+		rows = append(rows, specRow{
+			DraftID:       candidate.ID,
+			Arch:          string(candidate.Arch),
+			ParamsB:       candidate.ParamsB,
+			SizeRatio:     verdict.SizeRatio,
+			CombinedRAMGB: verdict.CombinedRAMGB,
+			Verdict:       v,
+			Reason:        verdict.Reason,
+		})
+	}
+
+	if len(rows) == 0 {
+		fmt.Fprintf(d.Stdout,
+			"no installed draft candidates for %s; run `llamactl fit %s` to find smaller variants of the same family\n",
+			mainID, mainModel.Arch)
+		return nil
+	}
+
+	// Sort: Ok rows first (sorted by |SizeRatio - 7.5| ascending — closest
+	// to the ideal 5-15× midpoint rises first), then !Ok rows by Reason.
+	sort.SliceStable(rows, func(i, j int) bool {
+		ai := rows[i].Verdict == "refused"
+		aj := rows[j].Verdict == "refused"
+		if ai != aj {
+			return !ai
+		}
+		if !ai {
+			di := math.Abs(rows[i].SizeRatio - 7.5)
+			dj := math.Abs(rows[j].SizeRatio - 7.5)
+			return di < dj
+		}
+		return rows[i].Reason < rows[j].Reason
+	})
+
+	if limit > 0 && len(rows) > limit {
+		rows = rows[:limit]
+	}
+
+	fmt.Fprintf(d.Stdout, "Draft candidates for %s (%g B, %s):\n\n",
+		mainID, mainMeta.ParamsB, mainMeta.Arch)
+	tw := tabwriter.NewWriter(d.Stdout, 0, 0, 2, ' ', 0)
+	fmt.Fprintln(tw, "DRAFT ID\tARCH\tPARAMSB\tRATIO\tCOMBINED RAM\tVERDICT")
+	for _, r := range rows {
+		symbol := "✓ ok"
+		if r.Verdict == "ratio-low" {
+			symbol = "⚠ ratio-low"
+		} else if r.Verdict == "ratio-high" {
+			symbol = "⚠ ratio-high"
+		} else if r.Verdict == "refused" {
+			symbol = "✗ refused"
+		}
+		fmt.Fprintf(tw, "%s\t%s\t%g B\t%.1f×\t%.1f GB\t%s\n",
+			r.DraftID, r.Arch, r.ParamsB, r.SizeRatio, r.CombinedRAMGB, symbol)
+	}
+	if err := tw.Flush(); err != nil {
+		return fmt.Errorf("flush tabwriter: %w", err)
+	}
+	fmt.Fprintln(d.Stdout)
+	fmt.Fprintln(d.Stdout, "Note: speculative decoding speedup depends on workload; ratio is a heuristic only.")
+	return nil
 }

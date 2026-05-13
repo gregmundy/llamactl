@@ -155,6 +155,42 @@ go build -o llamactl ./cmd/llamactl
 ./llamactl --help
 ```
 
+## Speculative decoding
+
+llamactl can wire llama-server's `--model-draft` flag for assisted decoding, where a smaller "draft" model proposes tokens that the main model verifies in parallel. Typical speedup: 1.5-3× depending on workload and draft quality.
+
+### Discovery
+
+```bash
+llamactl fit --speculative <main-model>
+```
+
+Lists installed models that share the main's architecture, sorted by closest fit to the ideal 5-15× size ratio. Example:
+
+```
+Draft candidates for qwen2.5-32b-instruct (32 B, qwen2.5):
+
+DRAFT ID                ARCH     PARAMSB  RATIO   COMBINED RAM   VERDICT
+qwen2.5-3b-instruct     qwen2.5  3 B      10.7×   24.1 GB        ✓ ok
+qwen2.5-0.5b-instruct   qwen2.5  0.5 B    64.0×   22.3 GB        ⚠ ratio-high
+```
+
+### Serving with a draft
+
+```bash
+llamactl serve qwen2.5-32b-instruct --draft qwen2.5-3b-instruct
+```
+
+The draft must be already installed. Mismatched architectures are refused (tokenizers diverge across families). Size ratios outside 5-15× warn but proceed.
+
+Detached serves (`--detach`) embed `--model-draft` and `--ctx-size-draft` in the LaunchAgent plist, so the pairing persists across reboots. Re-running `serve --detach` without `--draft` clears the pairing.
+
+### Limitations
+
+- Both models must be installed via `add`; llamactl does not auto-download a draft.
+- The draft's context window is capped at `min(main_ctx, draft.MaxCtx)` — exceeding the draft's training context degrades alignment.
+- Speedup is workload-dependent. Batch size, temperature, and prompt structure all matter. The ratio heuristic is informational only.
+
 ## Tips
 
 - Default port is 8080. If it's busy, `serve` shifts to the next free port in `[8080, 8180)`; `status` shows the actual port.
@@ -162,6 +198,10 @@ go build -o llamactl ./cmd/llamactl
 - Detached services survive reboot (launchd `RunAtLoad` + `KeepAlive`). Run `stop` to free GPU memory; `serve --detach` to bring it back.
 - `llamactl fit <query>` ranks new HuggingFace models against your host before download.
 - `llamactl cache prune` clears stale HuggingFace API cache (auto-pruned at 30 days but the command lets you force it).
+
+## Troubleshooting
+
+> **Note:** When `list` shows `?` for ParamsB, the model's GGUF lacks both `general.parameter_count` and `general.size_label`. Phase 6b's tensor-shape fallback handles most cases for llama / qwen2 / qwen3 / gemma3 / mistral architectures automatically on next `list` invocation. Unknown architectures still display `?`.
 
 ## License
 

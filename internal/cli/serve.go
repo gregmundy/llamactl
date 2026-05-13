@@ -26,21 +26,23 @@ func newServeCmd(d *Deps) *cobra.Command {
 	var port int
 	var recipe string
 	var detach bool
+	var draftID string // NEW
 	cmd := &cobra.Command{
 		Use:   "serve <model-id>",
 		Short: "Start llama-server for an installed model",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runServe(cmd.Context(), d, args[0], port, recipe, detach)
+			return runServe(cmd.Context(), d, args[0], port, recipe, detach, draftID)
 		},
 	}
 	cmd.Flags().IntVar(&port, "port", 8080, "TCP port for the OpenAI-compatible endpoint")
 	cmd.Flags().StringVar(&recipe, "recipe", recipes.DefaultRecipe, "chat | code | long-context | low-memory")
 	cmd.Flags().BoolVar(&detach, "detach", false, "register a launchd LaunchAgent and return")
+	cmd.Flags().StringVar(&draftID, "draft", "", "draft model id for speculative decoding (must be installed)")
 	return cmd
 }
 
-func runServe(ctx context.Context, d *Deps, id string, requestedPort int, recipeName string, detach bool) error {
+func runServe(ctx context.Context, d *Deps, id string, requestedPort int, recipeName string, detach bool, draftID string) error {
 	meta, err := d.ModelStore.Get(ctx, id)
 	if err != nil {
 		return fmt.Errorf("%w: model %q is not installed; run `llamactl add %s`", ErrUserError, id, id)
@@ -86,6 +88,31 @@ func runServe(ctx context.Context, d *Deps, id string, requestedPort int, recipe
 	}
 	sizeGB := float64(meta.SizeBytes) / (1 << 30)
 
+	// Phase 6b: speculative decoding via --draft.
+	var verdict models.PairVerdict
+	var draftMeta models.Metadata
+	hasDraft := draftID != ""
+	if hasDraft {
+		var err error
+		draftMeta, err = d.ModelStore.Get(ctx, draftID)
+		if err != nil {
+			return fmt.Errorf("%w: draft model %q is not installed; run `llamactl add %s` first",
+				ErrUserError, draftID, draftID)
+		}
+		draftModel := models.Model{
+			ID: draftMeta.ID, HFRepo: draftMeta.Repo, Arch: draftMeta.Arch,
+			ParamsB: draftMeta.ParamsB, MaxCtx: lookupMaxCtx(draftMeta),
+		}
+		verdict = models.SpeculativePair(model, draftModel, hw, recipeName)
+		if !verdict.Ok {
+			return fmt.Errorf("%w: %s", ErrUserError, verdict.Reason)
+		}
+		if verdict.Reason != "" {
+			// Warning band (Ok=true but Reason non-empty): print to stderr, continue.
+			fmt.Fprintf(d.Stderr, "llamactl: warning: %s\n", verdict.Reason)
+		}
+	}
+
 	// Build the skip list of ports already claimed by sibling
 	// com.llamactl.* services. Without this, two `serve --detach`
 	// invocations on different models within a few seconds can both
@@ -129,6 +156,28 @@ func runServe(ctx context.Context, d *Deps, id string, requestedPort int, recipe
 	}
 	if apiKey != "" {
 		argv = append(argv, "--api-key", apiKey)
+	}
+
+	// Phase 6b: append speculative-decoding args when --draft was set + validated.
+	if hasDraft {
+		// Draft ctx capped at min(main ctx, draft.MaxCtx). model.MaxCtx is the
+		// main model's training ctx; 0 means "no cap known" — fall back to a
+		// generic 8192 (matching the chat recipe's default).
+		mainCtx := model.MaxCtx
+		if mainCtx == 0 {
+			mainCtx = 8192
+		}
+		draftCtx := lookupMaxCtx(draftMeta)
+		if draftCtx == 0 || draftCtx > mainCtx {
+			draftCtx = mainCtx
+		}
+		argv = append(argv, "--model-draft", draftMeta.GGUFPath)
+		argv = append(argv, "--ctx-size-draft", fmt.Sprintf("%d", draftCtx))
+	}
+
+	if hasDraft {
+		fmt.Fprintf(d.Stdout, "speculative decoding enabled (draft=%s, ratio=%.1f×)\n",
+			draftMeta.ID, verdict.SizeRatio)
 	}
 
 	// Update metadata.LastServedAt before launching. If launch fails the

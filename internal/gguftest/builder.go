@@ -67,6 +67,46 @@ func Build(t *testing.T, version uint32, kvs ...KV) []byte {
 	return buf.Bytes()
 }
 
+// Tensor is a GGUF tensor descriptor. Type and Offset are ignored by the
+// parser's tensor-shape walk; tests typically set both to 0.
+type Tensor struct {
+	Name   string
+	Dims   []uint64
+	Type   uint32 // 0 = F32; ignored by ReadHeaderWithTensors
+	Offset uint64 // ignored by ReadHeaderWithTensors
+}
+
+// BuildWithTensors mirrors Build but also writes a tensor info block after
+// the kv-block. tensor_count in the GGUF header is set to len(tensors).
+func BuildWithTensors(t *testing.T, version uint32, tensors []Tensor, kvs ...KV) []byte {
+	t.Helper()
+	var buf bytes.Buffer
+	buf.WriteString("GGUF")
+	binary.Write(&buf, binary.LittleEndian, version)
+	binary.Write(&buf, binary.LittleEndian, uint64(len(tensors))) // tensor_count
+	binary.Write(&buf, binary.LittleEndian, uint64(len(kvs)))
+	for _, kv := range kvs {
+		writeString(&buf, kv.Key)
+		binary.Write(&buf, binary.LittleEndian, kv.Type)
+		if kv.RawTypeOnly {
+			continue
+		}
+		if err := writeValue(&buf, kv.Type, kv.Value); err != nil {
+			t.Fatalf("gguftest.BuildWithTensors: key=%q: %v", kv.Key, err)
+		}
+	}
+	for _, tn := range tensors {
+		writeString(&buf, tn.Name)
+		binary.Write(&buf, binary.LittleEndian, uint32(len(tn.Dims)))
+		for _, d := range tn.Dims {
+			binary.Write(&buf, binary.LittleEndian, d)
+		}
+		binary.Write(&buf, binary.LittleEndian, tn.Type)
+		binary.Write(&buf, binary.LittleEndian, tn.Offset)
+	}
+	return buf.Bytes()
+}
+
 func writeString(w *bytes.Buffer, s string) {
 	binary.Write(w, binary.LittleEndian, uint64(len(s)))
 	w.WriteString(s)
