@@ -9,7 +9,11 @@ func ArchFromGGUF(s string) Arch {
 	case "llama":
 		return ArchLlama3
 	case "mistral":
-		return ArchMistral
+		// Non-standard: real-world Mistral GGUFs report "llama". This case
+		// handles the rare GGUF that explicitly reports "mistral" so it
+		// still maps to the Llama-family Arch (matching KV-cache + params
+		// formulas).
+		return ArchLlama3
 	case "qwen2":
 		// Qwen 2 and Qwen 2.5 both emit general.architecture="qwen2" — the
 		// ArchQwen25 constant carries the same string. Map explicitly so the

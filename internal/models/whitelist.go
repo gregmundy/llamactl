@@ -30,7 +30,7 @@ var PreferredIDs = map[string]Model{
 	"llama3.1-8b":          {ID: "llama3.1-8b", HFRepo: "bartowski/Meta-Llama-3.1-8B-Instruct-GGUF", Arch: ArchLlama3, ParamsB: 8.0, MaxCtx: 131072},
 	"llama3.2-3b":          {ID: "llama3.2-3b", HFRepo: "bartowski/Llama-3.2-3B-Instruct-GGUF", Arch: ArchLlama3, ParamsB: 3.0, MaxCtx: 131072},
 	"llama3.3-70b":         {ID: "llama3.3-70b", HFRepo: "bartowski/Llama-3.3-70B-Instruct-GGUF", Arch: ArchLlama3, ParamsB: 70.0, MaxCtx: 131072},
-	"mistral-7b-v0.3":      {ID: "mistral-7b-v0.3", HFRepo: "bartowski/Mistral-7B-Instruct-v0.3-GGUF", Arch: ArchMistral, ParamsB: 7.0, MaxCtx: 32768},
+	"mistral-7b-v0.3":      {ID: "mistral-7b-v0.3", HFRepo: "bartowski/Mistral-7B-Instruct-v0.3-GGUF", Arch: ArchLlama3, ParamsB: 7.0, MaxCtx: 32768},
 }
 
 // LookupOrSuggest returns the PreferredIDs entry for id, or an error listing

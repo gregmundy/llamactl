@@ -27,7 +27,7 @@ func TestPreferredIDsEntriesWellFormed(t *testing.T) {
 			t.Errorf("PreferredIDs[%q].ParamsB = %g has no QuantSizeTable row", id, m.ParamsB)
 		}
 		switch m.Arch {
-		case ArchQwen25, ArchQwen3, ArchLlama3, ArchMistral:
+		case ArchQwen25, ArchQwen3, ArchLlama3, ArchGemma3, ArchGemma4:
 		default:
 			t.Errorf("PreferredIDs[%q].Arch = %q (not a known Arch)", id, m.Arch)
 		}
@@ -61,11 +61,13 @@ func TestArchFromGGUF(t *testing.T) {
 		want Arch
 	}{
 		{"llama", ArchLlama3},
-		{"qwen2", Arch("qwen2")}, // intentionally NOT ArchQwen25 — Qwen2 and Qwen2.5 differ
-		{"mistral", ArchMistral},
-		{"qwen3", Arch("qwen3")}, // pass-through for unknown
-		{"gemma", Arch("gemma")}, // pass-through for unknown
-		{"", Arch("")},           // pass-through for empty
+		{"qwen2", ArchQwen25}, // Qwen 2 + Qwen 2.5 share GGUF arch "qwen2"
+		{"qwen3", ArchQwen3},
+		{"mistral", ArchLlama3}, // non-standard; real Mistral GGUFs report "llama"
+		{"gemma3", ArchGemma3},
+		{"gemma4", ArchGemma4},
+		{"falcon", Arch("falcon")}, // pass-through for unknown
+		{"", Arch("")},             // pass-through for empty
 	}
 	for _, tc := range tests {
 		t.Run(tc.in, func(t *testing.T) {
