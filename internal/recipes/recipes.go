@@ -25,6 +25,31 @@ type Recipe struct {
 	CacheTypeK string
 	CacheTypeV string
 	MlockMode  MlockMode
+
+	// Sampling, when non-nil, pins server-side defaults for --temp,
+	// --top-p, --top-k, and --predict. nil means "leave llama-server's
+	// own defaults alone" — every recipe through v1.4.4 chose this.
+	//
+	// Pointer rather than embedded struct because zero values for the
+	// inner fields are meaningful: temp=0 is the deterministic-output
+	// case that motivated this field's existence.
+	Sampling *Sampling
+
+	// Reasoning, when non-empty, passes through as `--reasoning <value>`.
+	// "off" disables thinking server-wide for reasoning-capable families
+	// (Qwen3, DeepSeek-R1, future). The default empty string lets
+	// llama-server use its `auto` behavior.
+	Reasoning string
+}
+
+// Sampling carries the four request-default knobs the agent recipe pins.
+// All four fields are emitted together when Sampling != nil — partial
+// override isn't a use case today.
+type Sampling struct {
+	Temperature float64
+	TopP        float64
+	TopK        int
+	NPredict    int
 }
 
 const DefaultRecipe = "chat"
@@ -39,6 +64,24 @@ var Recipes = map[string]Recipe{
 	"code":         {Name: "code", CtxSize: 16384, CacheTypeK: "f16", CacheTypeV: "f16", MlockMode: MlockAuto},
 	"long-context": {Name: "long-context", CtxSize: 32768, CacheTypeK: "q8_0", CacheTypeV: "q8_0", MlockMode: MlockAuto},
 	"low-memory":   {Name: "low-memory", CtxSize: 4096, CacheTypeK: "q4_0", CacheTypeV: "q4_0", MlockMode: MlockOff},
+
+	// agent: deterministic, non-interactive utility workloads (summarize,
+	// extract, classify, rewrite, agent offload). Pins sampling so output
+	// is repeatable across identical prompts and forces --reasoning off
+	// so reasoning-capable models don't burn the generation budget on
+	// internal thinking and return empty content.
+	"agent": {
+		Name: "agent", CtxSize: 8192,
+		CacheTypeK: "f16", CacheTypeV: "f16",
+		MlockMode: MlockAuto,
+		Sampling: &Sampling{
+			Temperature: 0,
+			TopP:        1.0,
+			TopK:        0,
+			NPredict:    2048,
+		},
+		Reasoning: "off",
+	},
 }
 
 // FlagsFor assembles the llama-server argv. Inputs are read-only.
@@ -83,6 +126,20 @@ func FlagsFor(r Recipe, m models.Model, _ models.Quant, ggufPath string,
 		} else {
 			args = append(args, "--flash-attn")
 		}
+	}
+
+	// Optional per-recipe server-side defaults. Emitted in a stable order
+	// for snapshot-style test assertions.
+	if r.Sampling != nil {
+		args = append(args,
+			"--temp", fmt.Sprintf("%g", r.Sampling.Temperature),
+			"--top-p", fmt.Sprintf("%g", r.Sampling.TopP),
+			"--top-k", fmt.Sprintf("%d", r.Sampling.TopK),
+			"--predict", fmt.Sprintf("%d", r.Sampling.NPredict),
+		)
+	}
+	if r.Reasoning != "" {
+		args = append(args, "--reasoning", r.Reasoning)
 	}
 
 	return args
