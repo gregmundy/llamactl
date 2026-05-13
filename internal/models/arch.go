@@ -4,6 +4,26 @@ package models
 // to llamactl's Arch type. Recognised values map to canonical Archs;
 // unknown values pass through verbatim (the selector will not match them,
 // but they're stored in Metadata.Arch for `list` display and future use).
+// NormalizeArch maps legacy Arch string values to their current canonical
+// form. Used by list's self-heal path to migrate metadata written by older
+// llamactl versions without a GGUF re-parse:
+//
+//   - "qwen2.5" → ArchQwen25 (now "qwen2"). Pre-v1.4.0 ArchQwen25 value.
+//   - "mistral" → ArchLlama3. Pre-v1.4.1 ArchMistral; Mistral now folds into
+//     ArchLlama3 since real-world Mistral GGUFs report general.architecture
+//     ="llama" and KV-cache rates match.
+//
+// Returns the input unchanged for already-canonical or unknown values.
+func NormalizeArch(a Arch) Arch {
+	switch string(a) {
+	case "qwen2.5":
+		return ArchQwen25
+	case "mistral":
+		return ArchLlama3
+	}
+	return a
+}
+
 func ArchFromGGUF(s string) Arch {
 	switch s {
 	case "llama":

@@ -36,6 +36,16 @@ func runList(ctx context.Context, d *Deps) error {
 	tw := tabwriter.NewWriter(d.Stdout, 0, 0, 2, ' ', 0)
 	fmt.Fprintln(tw, "MODEL-ID\tQUANT\tPARAMS\tSIZE\tPATH\tADDED\tLAST-SERVED")
 	for i, m := range entries {
+		// Self-heal: cheap path. Normalize legacy Arch strings written by
+		// older llamactl versions (e.g. "qwen2.5" before v1.4.0, "mistral"
+		// before v1.4.1). No GGUF re-parse needed — purely a string
+		// substitution against a known-rename table.
+		if norm := models.NormalizeArch(m.Arch); norm != m.Arch {
+			m.Arch = norm
+			_ = d.ModelStore.Put(ctx, m)
+			entries[i] = m
+		}
+
 		// Self-heal: if metadata has no ParamsB but the GGUF file exists,
 		// re-parse the header and write back any values that were missing.
 		if m.ParamsB == 0 && m.GGUFPath != "" {
