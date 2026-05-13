@@ -33,7 +33,7 @@ func TestQuantSizeTableMonotonic(t *testing.T) {
 }
 
 func TestKVCacheTablesPopulated(t *testing.T) {
-	for _, arch := range []Arch{ArchQwen25, ArchQwen3, ArchLlama3, ArchMistral, ArchGemma3, ArchGemma4} {
+	for _, arch := range []Arch{ArchQwen25, ArchQwen3, ArchLlama3, ArchGemma3, ArchGemma4} {
 		row, ok := KVCachePerTokenKB[arch]
 		if !ok {
 			t.Errorf("KVCachePerTokenKB missing arch %s", arch)
@@ -63,7 +63,10 @@ func TestArchFromGGUFNormalization(t *testing.T) {
 		{"qwen2", ArchQwen25},
 		{"qwen3", ArchQwen3},
 		{"llama", ArchLlama3},
-		{"mistral", ArchMistral},
+		// "mistral" GGUF arch is non-standard (real Mistral GGUFs report
+		// "llama"). When a GGUF does report "mistral" explicitly, it maps
+		// to ArchLlama3 since Mistral uses Llama layer structure.
+		{"mistral", ArchLlama3},
 		{"gemma3", ArchGemma3},
 		{"gemma4", ArchGemma4},
 		{"falcon", Arch("falcon")}, // pass-through for unknown

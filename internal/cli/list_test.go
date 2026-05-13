@@ -303,3 +303,46 @@ func TestListSelfHealsViaTensorShape(t *testing.T) {
 	}
 	t.Logf("healed ParamsB = %.4f B", healed.ParamsB)
 }
+
+// TestListNormalizesLegacyArch covers the cheap self-heal path: metadata
+// written by pre-v1.4.0 llamactl carried arch="qwen2.5" (legacy ArchQwen25
+// value); pre-v1.4.1 metadata carried arch="mistral" (since-dropped
+// ArchMistral). list should rewrite both to their current canonical Arch
+// strings without re-parsing the GGUF.
+func TestListNormalizesLegacyArch(t *testing.T) {
+	store := newFakeModelStore()
+	tmp := t.TempDir()
+	// qwen2.5 legacy: arch was "qwen2.5"; should normalize to "qwen2".
+	_ = store.Put(context.Background(), models.Metadata{
+		ID: "qwen2.5-7b-instruct", Quant: models.Q4_K_M, SHA256: "abc",
+		GGUFPath:  filepath.Join(tmp, "qwen.gguf"),
+		SizeBytes: 4_400_000_000,
+		AddedAt:   time.Date(2026, 5, 11, 0, 0, 0, 0, time.UTC),
+		ParamsB:   7,
+		Arch:      models.Arch("qwen2.5"), // legacy value
+	})
+	// mistral legacy: arch was "mistral"; should normalize to "llama3".
+	_ = store.Put(context.Background(), models.Metadata{
+		ID: "mistral-7b-v0.3", Quant: models.Q4_K_M, SHA256: "def",
+		GGUFPath:  filepath.Join(tmp, "mistral.gguf"),
+		SizeBytes: 4_400_000_000,
+		AddedAt:   time.Date(2026, 5, 11, 0, 0, 0, 0, time.UTC),
+		ParamsB:   7,
+		Arch:      models.Arch("mistral"), // legacy value
+	})
+
+	d := &Deps{ModelStore: store, FS: OSFileSystem{}}
+	if _, _, err := runRoot(t, d, "list"); err != nil {
+		t.Fatalf("list: %v", err)
+	}
+
+	qwen, _ := store.Get(context.Background(), "qwen2.5-7b-instruct")
+	if qwen.Arch != models.ArchQwen25 {
+		t.Errorf("qwen2.5-7b-instruct Arch=%q, want %q", qwen.Arch, models.ArchQwen25)
+	}
+
+	mistral, _ := store.Get(context.Background(), "mistral-7b-v0.3")
+	if mistral.Arch != models.ArchLlama3 {
+		t.Errorf("mistral-7b-v0.3 Arch=%q, want %q", mistral.Arch, models.ArchLlama3)
+	}
+}
