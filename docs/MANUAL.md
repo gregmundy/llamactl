@@ -497,6 +497,31 @@ The `Public-bound endpoints have api_key set` check flags a `✗` warning when a
 
 **Known limitation:** llama-server's `/v1/models` endpoint is intentionally unauthenticated upstream. Only `/v1/chat/completions` and other inference endpoints enforce `--api-key`.
 
+### Hugging Face authentication (`hf_token`)
+
+`hf_token` is independent of `api_key`. It controls llamactl's outbound API calls to Hugging Face (for `search`, `fit`, `add`). Without a token, llamactl makes anonymous HF calls — sufficient for the entire preferred-ID table and any public GGUF repo.
+
+You only need a token for:
+
+- **Gated official-vendor models** like `meta-llama/Llama-3.1-8B-Instruct` or `google/gemma-3-27b-it`. The preferred-ID table uses community re-hosts (e.g. `bartowski/Meta-Llama-3.1-8B-Instruct-GGUF`) to avoid this.
+- **High-volume scripted use**. Anonymous HF API allows ~5000 req/hour. A `fit` invocation is 1 search + up to 25 RepoInfo = ~26 calls, so ~190 invocations per hour anonymous. Realistically not a concern for interactive use.
+
+Resolution order (highest wins):
+
+```
+LLAMACTL_HF_TOKEN env  →  HF_TOKEN env  →  config hf_token  →  anonymous
+```
+
+Set via:
+
+```bash
+llamactl config set hf_token hf_abc123      # persisted
+export HF_TOKEN=hf_abc123                    # session-scoped
+export LLAMACTL_HF_TOKEN=hf_abc123            # session-scoped, wins above
+```
+
+Per v1.4.4, the config path is wired correctly — earlier versions persisted the config value but never read it. If you upgraded from v1.4.3 or earlier and already had `hf_token` set in `config.yaml`, no action needed; it will now take effect.
+
 ---
 
 ## 8. Configuration files
@@ -705,6 +730,7 @@ The PRD called out the following as **out of scope** for v1. Re-elevation in lat
 | v1.4.1 | 2026-05-12 | Cleanup: exported speculative thresholds, dropped `ArchMistral`, `list` self-heals legacy Arch strings, `fit` 60/40 dedupe bucketing. |
 | v1.4.2 | 2026-05-12 | Hotfix: `fit` no longer hangs when an HF API response stalls. Added transport-level `ResponseHeaderTimeout` (30 s) to the HTTP client. Downloads unaffected (no global `Timeout`). |
 | v1.4.3 | 2026-05-12 | `fit` parallelizes its `RepoInfo` loop (8 concurrent) — `fit gemma` drops from ~60 s to ~10 s. TTY progress line `"fetching repo info (N/M)…"` updates in place during the wait; suppressed for non-TTY output so pipes stay clean. |
+| v1.4.4 | 2026-05-12 | Fix: `hf_token` set via `config` was being silently ignored (env-only resolution path). Now `LLAMACTL_HF_TOKEN > HF_TOKEN > config hf_token > anonymous`. |
 
 ---
 
@@ -724,7 +750,8 @@ The PRD called out the following as **out of scope** for v1. Re-elevation in lat
 | Variable | Purpose |
 |---|---|
 | `LLAMACTL_API_KEY` | Endpoint auth token; wins over `config api_key` |
-| `HF_TOKEN` | (Not currently consumed directly — use `config set hf_token`.) |
+| `HF_TOKEN` | Hugging Face API token used on every HF call. Wins over `config set hf_token`. |
+| `LLAMACTL_HF_TOKEN` | Same as `HF_TOKEN` but takes precedence when both are set. |
 | `PATH` | Used to discover `llama-server` |
 | `HOME` | Used to derive every storage path |
 
