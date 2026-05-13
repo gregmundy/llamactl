@@ -95,7 +95,7 @@ func main() {
 	// Phase 2: wire HFClient, Downloader, QuantSelector, ModelStore
 	hfCache := hf.NewCache(paths.CacheDir())
 	hfClient := hf.NewClient("https://huggingface.co", hfCache, hfHTTPClient())
-	if tok := firstNonEmptyEnv("LLAMACTL_HF_TOKEN", "HF_TOKEN"); tok != "" {
+	if tok := resolveHFToken(os.Getenv, &cfg); tok != "" {
 		hfClient = hfClient.WithToken(tok)
 	}
 
@@ -142,11 +142,28 @@ func main() {
 	}
 }
 
-func firstNonEmptyEnv(keys ...string) string {
-	for _, k := range keys {
-		if v := os.Getenv(k); v != "" {
+// resolveHFToken returns the Hugging Face API token to use for every HF
+// call, with this precedence (highest wins):
+//
+//  1. LLAMACTL_HF_TOKEN env var
+//  2. HF_TOKEN env var
+//  3. config.yaml `hf_token` key
+//  4. "" (no token — calls are anonymous)
+//
+// Matches the precedence shape used for `api_key` in serve.go.
+//
+// Before v1.4.4 the config path was dead code: `llamactl config set
+// hf_token X` persisted the value but main.go never read it. This helper
+// closes that gap and exists outside main() so tests can drive it without
+// process-global env state.
+func resolveHFToken(getenv func(string) string, cfg *config.Config) string {
+	for _, k := range []string{"LLAMACTL_HF_TOKEN", "HF_TOKEN"} {
+		if v := getenv(k); v != "" {
 			return v
 		}
+	}
+	if cfg != nil && cfg.HFToken != "" {
+		return cfg.HFToken
 	}
 	return ""
 }
