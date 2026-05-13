@@ -10,7 +10,7 @@ import (
 )
 
 func TestRecipesMapWellFormed(t *testing.T) {
-	want := []string{"chat", "code", "long-context", "low-memory"}
+	want := []string{"chat", "code", "long-context", "low-memory", "agent"}
 	for _, name := range want {
 		r, ok := Recipes[name]
 		if !ok {
@@ -154,6 +154,68 @@ func TestFlagsFor_FlashAttnLegacySyntaxOnOldBuild(t *testing.T) {
 	for i, a := range args {
 		if a == "--flash-attn" && i+1 < len(args) && args[i+1] == "on" {
 			t.Errorf("argv[%d:%d] = [%q, %q] — should be bare --flash-attn, not tristate", i, i+2, a, args[i+1])
+		}
+	}
+}
+
+// TestFlagsFor_AgentRecipePinsSamplingAndReasoning verifies the agent
+// recipe emits the five new flags with the documented defaults.
+func TestFlagsFor_AgentRecipePinsSamplingAndReasoning(t *testing.T) {
+	args := FlagsFor(Recipes["agent"], mkModel(32768), models.Q4_K_M, "/x",
+		mkHW(64), mkVer(4500), server.Capabilities{FlashAttnTristate: true}, 4.4, 8080, 10)
+
+	want := map[string]string{
+		"--temp":      "0",
+		"--top-p":     "1",
+		"--top-k":     "0",
+		"--predict":   "2048",
+		"--reasoning": "off",
+	}
+	for flag, expected := range want {
+		got, ok := argvFlag(args, flag)
+		if !ok {
+			t.Errorf("agent recipe missing %s flag", flag)
+			continue
+		}
+		if got != expected {
+			t.Errorf("%s = %q, want %q", flag, got, expected)
+		}
+	}
+}
+
+// TestFlagsFor_AgentRecipeBaseFlagsUnchanged verifies the agent recipe
+// still emits the base argv (ctx, kv cache, gpu layers, flash-attn). The
+// new fields are purely additive.
+func TestFlagsFor_AgentRecipeBaseFlagsUnchanged(t *testing.T) {
+	args := FlagsFor(Recipes["agent"], mkModel(32768), models.Q4_K_M, "/x",
+		mkHW(64), mkVer(4500), server.Capabilities{FlashAttnTristate: true}, 4.4, 8080, 10)
+	if v, _ := argvFlag(args, "--ctx-size"); v != "8192" {
+		t.Errorf("--ctx-size = %q, want 8192", v)
+	}
+	if v, _ := argvFlag(args, "--cache-type-k"); v != "f16" {
+		t.Errorf("--cache-type-k = %q, want f16", v)
+	}
+	if v, _ := argvFlag(args, "--n-gpu-layers"); v != "999" {
+		t.Errorf("--n-gpu-layers = %q, want 999", v)
+	}
+	if !argvHasFlag(args, "--mlock") {
+		t.Error("expected --mlock for agent on 64GB host with 4.4GB model")
+	}
+}
+
+// TestFlagsFor_ExistingRecipesDoNotEmitNewFlags is the regression guard
+// for chat/code/long-context/low-memory: none of them should suddenly
+// inherit --temp/--top-p/--top-k/--predict/--reasoning flags. The new
+// fields default to nil/empty in those entries.
+func TestFlagsFor_ExistingRecipesDoNotEmitNewFlags(t *testing.T) {
+	newFlags := []string{"--temp", "--top-p", "--top-k", "--predict", "--reasoning"}
+	for _, name := range []string{"chat", "code", "long-context", "low-memory"} {
+		args := FlagsFor(Recipes[name], mkModel(32768), models.Q4_K_M, "/x",
+			mkHW(64), mkVer(4500), server.Capabilities{FlashAttnTristate: true}, 4.4, 8080, 10)
+		for _, flag := range newFlags {
+			if argvHasFlag(args, flag) {
+				t.Errorf("recipe %q unexpectedly emitted %s — agent fields leaked into a non-agent recipe", name, flag)
+			}
 		}
 	}
 }
