@@ -12,9 +12,14 @@ import (
 
 func newStopCmd(d *Deps) *cobra.Command {
 	return &cobra.Command{
-		Use:   "stop [<model-id>]",
-		Short: "Stop a detached llamactl service (or all services if no id)",
-		Args:  cobra.MaximumNArgs(1),
+		Use:   "stop [<run-name>]",
+		Short: "Stop a detached llamactl service (or all services if no name)",
+		Long: `Stop a detached llamactl service.
+
+Without arguments, stops every running llamactl service. With a run-name,
+stops just that one. The default run-name is the model id, so single-
+instance users can still pass the model id directly.`,
+		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if len(args) == 0 {
 				return runStopAll(cmd.Context(), d)
@@ -34,28 +39,28 @@ func runStopAll(ctx context.Context, d *Deps) error {
 		return nil
 	}
 	for _, svc := range services {
-		id := strings.TrimPrefix(svc.Label, "com.llamactl.")
-		if err := stopOne(ctx, d, svc.Label, svc.PlistPath, id); err != nil {
-			fmt.Fprintf(d.Stderr, "llamactl: warning: stop %s: %v\n", id, err)
+		name := strings.TrimPrefix(svc.Label, "com.llamactl.")
+		if err := stopOne(ctx, d, svc.Label, svc.PlistPath, name); err != nil {
+			fmt.Fprintf(d.Stderr, "llamactl: warning: stop %s: %v\n", name, err)
 		}
 	}
 	return nil
 }
 
-func runStopOne(ctx context.Context, d *Deps, id string) error {
-	label := "com.llamactl." + id
+func runStopOne(ctx context.Context, d *Deps, name string) error {
+	label := "com.llamactl." + name
 	plistPath := filepath.Join(d.LaunchAgentsDir, label+".plist")
 	if _, err := os.Stat(plistPath); err != nil {
-		return fmt.Errorf("%w: no detached service for %q (looked at %s)", ErrUserError, id, plistPath)
+		return fmt.Errorf("%w: no detached service named %q (looked at %s)", ErrUserError, name, plistPath)
 	}
-	return stopOne(ctx, d, label, plistPath, id)
+	return stopOne(ctx, d, label, plistPath, name)
 }
 
-func stopOne(ctx context.Context, d *Deps, label, plistPath, id string) error {
+func stopOne(ctx context.Context, d *Deps, label, plistPath, name string) error {
 	_ = d.LaunchdService.Bootout(ctx, label) // best-effort
 	if err := os.Remove(plistPath); err != nil && !os.IsNotExist(err) {
 		return fmt.Errorf("remove plist: %w", err)
 	}
-	fmt.Fprintf(d.Stdout, "stopped %s and removed %s\n", id, plistPath)
+	fmt.Fprintf(d.Stdout, "stopped %s and removed %s\n", name, plistPath)
 	return nil
 }

@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/gregmundy/llamactl/internal/download"
@@ -162,14 +163,39 @@ type fakeLaunchdService struct {
 	ListResult []launchd.ServiceInfo
 	LoadErr    error
 	BootoutErr error
+	// NoAutoLoadPID disables the default behavior of Load auto-populating
+	// Services with a synthetic PID=4242 entry on success. Tests that
+	// simulate "service was loaded but never came up" (e.g. ctx-cancel
+	// poll tests) set this to true so the post-load poll spins instead
+	// of immediately finding a PID.
+	NoAutoLoadPID bool
 }
 
 func (f *fakeLaunchdService) Load(_ context.Context, plistPath string) error {
 	f.Loaded = append(f.Loaded, plistPath)
+	if f.LoadErr == nil && !f.NoAutoLoadPID {
+		// Mirror launchctl: a successful bootstrap means Print will start
+		// reporting the service as running. Derive label from plist
+		// filename (matches runServeDetached's naming convention).
+		label := strings.TrimSuffix(filepath.Base(plistPath), ".plist")
+		if f.Services == nil {
+			f.Services = map[string]launchd.ServiceInfo{}
+		}
+		f.Services[label] = launchd.ServiceInfo{
+			Label: label, PID: 4242, State: "running", PlistPath: plistPath,
+		}
+	}
 	return f.LoadErr
 }
 func (f *fakeLaunchdService) Bootout(_ context.Context, label string) error {
 	f.Booted = append(f.Booted, label)
+	if f.BootoutErr == nil {
+		// Mirror launchctl: after a successful bootout, Print should no
+		// longer report the service as running. waitForLabelGone polls
+		// for this, so the fake needs to clear the entry to avoid
+		// spinning until the deadline in tests.
+		delete(f.Services, label)
+	}
 	return f.BootoutErr
 }
 func (f *fakeLaunchdService) Print(_ context.Context, label string) (launchd.ServiceInfo, error) {

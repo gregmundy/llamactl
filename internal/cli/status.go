@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"text/tabwriter"
@@ -30,6 +31,7 @@ func newStatusCmd(d *Deps) *cobra.Command {
 }
 
 type statusRow struct {
+	Name          string  `json:"name"`
 	ModelID       string  `json:"model_id"`
 	Port          int     `json:"port"`
 	State         string  `json:"state"`
@@ -40,7 +42,10 @@ type statusRow struct {
 	Endpoint      string  `json:"endpoint,omitempty"`
 }
 
-var plistPortRe = regexp.MustCompile(`(?s)<string>--port</string>\s*<string>(\d+)</string>`)
+var (
+	plistPortRe  = regexp.MustCompile(`(?s)<string>--port</string>\s*<string>(\d+)</string>`)
+	plistModelRe = regexp.MustCompile(`(?s)<string>--model</string>\s*<string>([^<]+)</string>`)
+)
 
 func runStatus(ctx context.Context, d *Deps, asJSON bool) error {
 	services, err := d.LaunchdService.List(ctx)
@@ -58,10 +63,11 @@ func runStatus(ctx context.Context, d *Deps, asJSON bool) error {
 
 	rows := make([]statusRow, 0, len(services))
 	for _, svc := range services {
-		id := strings.TrimPrefix(svc.Label, "com.llamactl.")
+		name := strings.TrimPrefix(svc.Label, "com.llamactl.")
 		port := readPortFromPlist(svc.PlistPath)
+		modelID := readModelIDFromPlist(svc.PlistPath)
 
-		row := statusRow{ModelID: id, Port: port}
+		row := statusRow{Name: name, ModelID: modelID, Port: port}
 		info, _ := d.LaunchdService.Print(ctx, svc.Label)
 		if info.PID == 0 {
 			row.State = "stopped"
@@ -74,7 +80,8 @@ func runStatus(ctx context.Context, d *Deps, asJSON bool) error {
 			if up, err := d.ProcInspector.Uptime(info.PID); err == nil {
 				row.UptimeSeconds = int64(up.Seconds())
 			}
-			logPath := d.LogsDir + "/" + id + ".log"
+			// Log file path is keyed by run name (matches runServeDetached).
+			logPath := d.LogsDir + "/" + name + ".log"
 			rate, _ := d.TokRateReader.Rate(logPath, time.Minute, time.Now())
 			row.TokensPerSec = rate
 			if port > 0 {
@@ -94,7 +101,7 @@ func runStatus(ctx context.Context, d *Deps, asJSON bool) error {
 	}
 
 	tw := tabwriter.NewWriter(d.Stdout, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(tw, "MODEL-ID\tPORT\tSTATE\tMEM\tUPTIME\tTOK/S\tENDPOINT")
+	fmt.Fprintln(tw, "NAME\tMODEL-ID\tPORT\tSTATE\tMEM\tUPTIME\tTOK/S\tENDPOINT")
 	for _, r := range rows {
 		mem := "—"
 		upStr := "—"
@@ -108,10 +115,37 @@ func runStatus(ctx context.Context, d *Deps, asJSON bool) error {
 			}
 			ep = r.Endpoint
 		}
-		fmt.Fprintf(tw, "%s\t%d\t%s\t%s\t%s\t%s\t%s\n",
-			r.ModelID, r.Port, r.State, mem, upStr, toks, ep)
+		modelDisplay := r.ModelID
+		if modelDisplay == "" {
+			// Plist didn't carry a parseable --model arg. Fall back to name
+			// so the table cell isn't empty — typical when status reads a
+			// plist from an older llamactl version or a manually-edited file.
+			modelDisplay = "—"
+		}
+		fmt.Fprintf(tw, "%s\t%s\t%d\t%s\t%s\t%s\t%s\t%s\n",
+			r.Name, modelDisplay, r.Port, r.State, mem, upStr, toks, ep)
 	}
 	return tw.Flush()
+}
+
+// readModelIDFromPlist extracts the model id from the plist's `--model
+// <path>` argument. The path follows the convention
+//   ~/.local/share/llama-models/<id>/<quant>.gguf
+// so the parent directory of the file IS the model id. Returns "" if
+// the plist is missing, malformed, or the --model arg can't be parsed.
+func readModelIDFromPlist(plistPath string) string {
+	data, err := os.ReadFile(plistPath)
+	if errors.Is(err, fs.ErrNotExist) {
+		return ""
+	}
+	if err != nil {
+		return ""
+	}
+	m := plistModelRe.FindSubmatch(data)
+	if m == nil {
+		return ""
+	}
+	return filepath.Base(filepath.Dir(string(m[1])))
 }
 
 func readPortFromPlist(plistPath string) int {

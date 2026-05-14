@@ -288,26 +288,44 @@ bound to :8082 (:8080 was in use)
 service qwen2.5-3b-instruct started (pid=4914, recipe=chat); endpoint http://localhost:8082
 ```
 
-The detached path writes `~/Library/LaunchAgents/com.llamactl.<model-id>.plist`, loads it via `launchctl bootstrap gui/<UID>`, and polls up to 5 seconds for the process to come up.
+The detached path writes `~/Library/LaunchAgents/com.llamactl.<run-name>.plist`, loads it via `launchctl bootstrap gui/<UID>`, and polls up to 5 seconds for the process to come up.
 
 **Flags:**
 - `--port <int>` — TCP port (default 8080). If occupied, llamactl scans `[port, port+100)` for a free one.
 - `--recipe <name>` — `chat` / `code` / `long-context` / `low-memory` / `agent` (default `chat`). See §5.
 - `--detach` — register as a launchd service and return.
 - `--draft <id>` — draft model id for speculative decoding (must be installed). See §9.
+- `--name <run-name>` — run name (default: model id). Lets you serve the same model multiple times in parallel at different recipes/ports. The plist, log file, and `stop`/`status` commands all key off this name.
 
-**Port allocation:** sibling `com.llamactl.*` plists are scanned; their ports are in the skip-list so concurrent detached serves on different models pick distinct ports. Re-serving the same model reuses its existing port.
+**Run names (v1.5.0):** by default the run name equals the model id. Two parallel runs of the same model need distinct `--name` values. Example:
+
+```bash
+llamactl serve qwen2.5-7b-instruct --recipe long-context --detach --name qwen-rag
+llamactl serve qwen2.5-7b-instruct --recipe agent        --detach --name qwen-utils
+```
+
+Both run side-by-side, each with its own plist (`com.llamactl.qwen-rag.plist`, `com.llamactl.qwen-utils.plist`), its own log file (`~/Library/Logs/llamactl/qwen-rag.log`, etc.), and its own port. `stop qwen-rag` stops just that one.
+
+Re-serving the **same** name (the default single-instance flow, or explicitly with `--name`) atomically replaces the existing run: llamactl bootouts the old launchd job, waits for teardown to settle, and bootstraps the new one. v1.5.0 fixed a launchctl race where the bootstrap could occasionally exit-5 because bootout was still in-flight.
+
+Run names must match `^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$` — same shape model ids already use.
+
+**Port allocation:** sibling `com.llamactl.*` plists are scanned; their ports are in the skip-list so concurrent detached serves on different runs pick distinct ports. Re-serving the same run name reuses its existing port.
 
 **Authentication:** if `api_key` is set (via `config` or `LLAMACTL_API_KEY` env), `--api-key <token>` is appended to llama-server's argv. The env var wins over the config file.
 
-### 4.10 `llamactl stop [<model-id>]`
+### 4.10 `llamactl stop [<run-name>]`
 
-Stop a detached service. Without an argument, stops all running llamactl-managed services.
+Stop a detached service. Without an argument, stops every running llamactl-managed service. With a run name, stops just that one. The default run name is the model id, so single-instance users can pass the model id directly.
 
 ```
 $ llamactl stop qwen2.5-3b-instruct
 stopped qwen2.5-3b-instruct and removed
   /Users/greg/Library/LaunchAgents/com.llamactl.qwen2.5-3b-instruct.plist
+
+$ llamactl stop qwen-rag      # explicit run name
+stopped qwen-rag and removed
+  /Users/greg/Library/LaunchAgents/com.llamactl.qwen-rag.plist
 
 $ llamactl stop
 stopped 2 services
@@ -321,15 +339,18 @@ List detached llamactl services with live memory, uptime, and recent tok/s.
 
 ```
 $ llamactl status
-MODEL-ID             PORT  STATE    MEM      UPTIME  TOK/S     ENDPOINT
-qwen2.5-3b-instruct  8082  running  4.6 GiB  21s     72.0 t/s  http://localhost:8082
-qwen3-1.7b           8083  running  1.4 GiB  3m12s   45.2 t/s  http://localhost:8083
+NAME         MODEL-ID             PORT  STATE    MEM      UPTIME  TOK/S     ENDPOINT
+qwen-rag     qwen2.5-7b-instruct  8082  running  4.6 GiB  21s     72.0 t/s  http://localhost:8082
+qwen-utils   qwen2.5-7b-instruct  8083  running  4.6 GiB  18s     —         http://localhost:8083
+qwen3-1.7b   qwen3-1.7b           8084  running  1.4 GiB  3m12s   45.2 t/s  http://localhost:8084
 ```
+
+The NAME column is the run name (from the launchd label); MODEL-ID is parsed out of the plist's `--model` arg path. Single-instance users (no `--name` passed) see NAME equal to MODEL-ID — the additional column is informational, not noise.
 
 Memory comes from `ps -o rss=`. tok/s comes from parsing the last 256 KiB of the log file for `eval time`/`prompt eval time` lines.
 
 **Flags:**
-- `--json` — emit machine-readable JSON
+- `--json` — emit machine-readable JSON. The JSON shape gained a `name` field in v1.5.0; `model_id` remains.
 
 ### 4.12 `llamactl config`
 
