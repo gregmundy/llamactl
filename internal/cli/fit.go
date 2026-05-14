@@ -87,6 +87,17 @@ func newFitCmd(d *Deps) *cobra.Command {
 	cmd.Flags().IntVar(&limit, "limit", 10, "cap rows shown")
 	cmd.Flags().BoolVar(&asJSON, "json", false, "emit JSON instead of a table")
 	cmd.Flags().BoolVar(&speculative, "speculative", false, "list installed draft candidates for the named main model")
+
+	// Tab completion: positional is a free-form HF query in the default
+	// mode (no completion possible — would require HF API per keystroke),
+	// but with --speculative it's an installed model id. Inspect the
+	// already-parsed flag value to decide.
+	cmd.ValidArgsFunction = func(c *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
+		if spec, _ := c.Flags().GetBool("speculative"); spec {
+			return completeInstalledModels(d)(c, args, toComplete)
+		}
+		return nil, cobra.ShellCompDirectiveNoFileComp
+	}
 	return cmd
 }
 

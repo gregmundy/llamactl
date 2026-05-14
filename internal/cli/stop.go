@@ -11,7 +11,7 @@ import (
 )
 
 func newStopCmd(d *Deps) *cobra.Command {
-	return &cobra.Command{
+	cmd := &cobra.Command{
 		Use:   "stop [<run-name>]",
 		Short: "Stop a detached llamactl service (or all services if no name)",
 		Long: `Stop a detached llamactl service.
@@ -26,7 +26,9 @@ instance users can still pass the model id directly.`,
 			}
 			return runStopOne(cmd.Context(), d, args[0])
 		},
+		ValidArgsFunction: completeRunningServiceNames(d),
 	}
+	return cmd
 }
 
 func runStopAll(ctx context.Context, d *Deps) error {

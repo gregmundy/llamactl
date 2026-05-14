@@ -34,6 +34,7 @@ func newAddCmd(d *Deps) *cobra.Command {
 	}
 	cmd.Flags().StringVar(&quantOverride, "quant", "", "override automatic quant selection")
 	cmd.Flags().IntVar(&targetCtx, "ctx", 8192, "target context size for quant calculation")
+	cmd.ValidArgsFunction = completePreferredOrModelPath()
 	return cmd
 }
 
