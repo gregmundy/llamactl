@@ -52,8 +52,8 @@ These are load-bearing — they're documented because past iterations broke when
 5. **Storage paths are fixed:**
    - `~/.local/share/llama-models/<id>/<quant>.gguf` — shared with llamavm (don't move it)
    - `~/.config/llamactl/models/<id>.json` — per-tool metadata (we own this)
-   - `~/Library/LaunchAgents/com.llamactl.<id>.plist` — one per detached serve
-   - `~/Library/Logs/llamactl/<id>.log` — rotated at 10 MiB
+   - `~/Library/LaunchAgents/com.llamactl.<run-name>.plist` — one per detached serve (run-name defaults to model id; v1.5.0 added `--name` for parallel runs)
+   - `~/Library/Logs/llamactl/<run-name>.log` — rotated at 10 MiB
    - `~/.cache/llamactl/hf-{search,repo}/` — HF API cache (30d TTL)
 
 6. **`models.PreferredIDs` is not a gate.** `add Author/Repo --quant Q4_K_M` accepts any HF GGUF repo. PreferredIDs exists for ergonomics + curated metadata.
