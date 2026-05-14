@@ -3,6 +3,9 @@
 /gguf-inspect
 /dist/
 
+# GoReleaser-managed completion scripts (regenerated each release)
+/completions/
+
 # Go
 *.test
 *.out
