@@ -56,9 +56,14 @@ func runAddPreferred(ctx context.Context, d *Deps, id, quantOverride string, tar
 	}
 	var quant models.Quant
 	if quantOverride != "" {
-		if !isKnownQuant(quantOverride) {
-			return fmt.Errorf("%w: unknown --quant %q (known: %s)", ErrUserError, quantOverride, knownQuantsList())
-		}
+		// Explicit --quant is a user-supplied filename hint, not a
+		// selector-fallback-chain pick. Don't gate it on PreferenceOrder
+		// (which exists to drive QuantSelector when --quant is absent).
+		// findQuantFile downstream resolves it against actual repo
+		// siblings — its error message already lists what's available
+		// when nothing matches, which is the correct UX. Pre-v1.5.1
+		// this gate rejected community dynamic quants (Q3_K_XL, Q8_K_XL,
+		// IQ3_XXS) that `fit` happily recommends.
 		quant = models.Quant(quantOverride)
 	} else {
 		quant, err = d.QuantSelector.Select(model, hw, targetCtx)
@@ -91,9 +96,8 @@ func runAddHFPath(ctx context.Context, d *Deps, repoID, quantOverride string) er
 		return fmt.Errorf("%w: add %s requires --quant; available in %s: %s",
 			ErrUserError, repoID, repoID, available)
 	}
-	if !isKnownQuant(quantOverride) {
-		return fmt.Errorf("%w: unknown --quant %q (known: %s)", ErrUserError, quantOverride, knownQuantsList())
-	}
+	// As in runAddPreferred: pass --quant through verbatim; findQuantFile
+	// is the source of truth for whether the file exists in the repo.
 	quant := models.Quant(quantOverride)
 	file, expectedSHA, totalSize, err := findQuantFile(repo, quant)
 	if err != nil {
@@ -228,23 +232,6 @@ func findQuantFile(repo hf.Repo, quant models.Quant) (file, sha string, size int
 		return s.RFilename, s.LFS.SHA256, s.LFS.Size, nil
 	}
 	return "", "", 0, fmt.Errorf("no %s file in %s; available: %s", quant, repo.ID, strings.Join(available, ", "))
-}
-
-func isKnownQuant(q string) bool {
-	for _, p := range models.PreferenceOrder {
-		if string(p) == q {
-			return true
-		}
-	}
-	return false
-}
-
-func knownQuantsList() string {
-	out := make([]string, 0, len(models.PreferenceOrder))
-	for _, q := range models.PreferenceOrder {
-		out = append(out, string(q))
-	}
-	return strings.Join(out, ", ")
 }
 
 func humanFileSize(n int64) string {
