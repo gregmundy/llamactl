@@ -72,6 +72,19 @@ func newServeCmd(d *Deps) *cobra.Command {
 	cmd.Flags().BoolVar(&detach, "detach", false, "register a launchd LaunchAgent and return")
 	cmd.Flags().StringVar(&draftID, "draft", "", "draft model id for speculative decoding (must be installed)")
 	cmd.Flags().StringVar(&runName, "name", "", "run name (defaults to <model-id>; lets you run the same model multiple times in parallel)")
+
+	// Tab completion: positional is an installed model id; --recipe is a
+	// small static set; --draft is also an installed id but filters out
+	// whatever the positional already chose (a model can't draft itself).
+	cmd.ValidArgsFunction = completeInstalledModels(d)
+	_ = cmd.RegisterFlagCompletionFunc("recipe", completeRecipeNames)
+	_ = cmd.RegisterFlagCompletionFunc("draft", func(c *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
+		var mainID string
+		if len(args) > 0 {
+			mainID = args[0]
+		}
+		return completeInstalledModels(d, mainID)(c, args, toComplete)
+	})
 	return cmd
 }
 

@@ -23,6 +23,7 @@ func newRemoveCmd(d *Deps) *cobra.Command {
 		},
 	}
 	cmd.Flags().BoolVar(&purge, "purge", false, "also delete the shared GGUF file (best-effort cross-tool check)")
+	cmd.ValidArgsFunction = completeInstalledModels(d)
 	return cmd
 }
 

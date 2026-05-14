@@ -86,6 +86,7 @@ func newConfigGetCmd(d *Deps) *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runConfigGet(d, args[0])
 		},
+		ValidArgsFunction: completeConfigKeys,
 	}
 }
 
@@ -109,6 +110,14 @@ func newConfigSetCmd(d *Deps) *cobra.Command {
 		Args:  cobra.ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runConfigSet(d, args[0], args[1])
+		},
+		ValidArgsFunction: func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
+			// Only complete the first positional (the key); values are
+			// user-supplied free-form (port numbers, secrets, paths).
+			if len(args) > 0 {
+				return nil, cobra.ShellCompDirectiveNoFileComp
+			}
+			return completeConfigKeys(cmd, args, toComplete)
 		},
 	}
 }
