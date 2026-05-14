@@ -514,7 +514,7 @@ Recipes are pure-function over the main model only — speculative decoding's `-
 | `--predict` | `2048` | Bounded generation; bounded enough to fail-fast on runaway, generous enough for rich outputs |
 | `--reasoning` | `off` | Disables thinking server-wide on reasoning-capable models (Qwen3, DeepSeek-R1, etc.). Without this, those models can spend their entire generation budget inside `<think>` blocks and return empty `content`. |
 
-Callers can override any of these per-request via the OpenAI chat-completions body fields (`temperature`, `top_p`, `max_tokens`). Recipe settings are *defaults*, not enforcements.
+Recipe settings are *defaults*, not enforcements — callers can override any of `temperature`, `top_p`, `top_k`, `max_tokens` per-request via the OpenAI chat-completions body. See "Overriding recipe parameters" below.
 
 Pair `agent` with a small fast model (e.g. `qwen2.5-3b-instruct`, `qwen3-1.7b`) for offload duty. Larger models work fine too but the recipe was tuned around sub-3B utility workloads.
 
@@ -536,6 +536,75 @@ When to pick `agent` vs `thinking`:
 
 - **`agent`** — utility offload. You want the answer, fast, no chain-of-thought clutter, no token waste.
 - **`thinking`** — hard problems where the reasoning matters. You want to inspect or stream the model's thought process; you accept the latency.
+
+### Overriding recipe parameters
+
+Recipes set **server-startup defaults**. Some parameters can also be overridden **per request** via the OpenAI body; others can only change by restarting the server with a different recipe (or with a different `--name` so it runs in parallel).
+
+#### Per-request overrides (no restart needed)
+
+Standard OpenAI chat-completions fields override the recipe's sampling defaults for that one call. The recipe value applies whenever the field is absent.
+
+| OpenAI body field | Overrides recipe flag | Notes |
+|---|---|---|
+| `temperature` | `--temp` | Float ≥ 0. `0` is deterministic. |
+| `top_p` | `--top-p` | `1.0` disables nucleus filtering. |
+| `top_k` | `--top-k` | `0` disables. |
+| `max_tokens` | `--predict` | Hard cap on completion tokens. |
+| `stop` | (none — request-only) | Array of strings or single string. |
+| `seed` | (none — request-only) | Integer; pairs well with `temperature: 0` for full reproducibility. |
+| `stream` | (none — request-only) | `true` for SSE. |
+
+Example: server is running with `--recipe agent` (deterministic defaults) but this one call wants exploratory sampling:
+
+```bash
+curl -s http://localhost:8082/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "qwen2.5-3b-instruct",
+    "messages": [{"role":"user","content":"Brainstorm 5 names for a coffee shop"}],
+    "temperature": 0.9,
+    "top_p": 0.95,
+    "max_tokens": 300
+  }'
+```
+
+The next call without those fields reverts to the recipe defaults (`temperature: 0`, etc.). No state carries between calls.
+
+#### Restart-only overrides
+
+These are baked into the launched `llama-server` process and can't change per request:
+
+| Parameter | Why it's startup-only | Workaround |
+|---|---|---|
+| `--ctx-size` | KV cache is sized at load time | Restart with `--recipe long-context` (or a custom recipe). |
+| `--cache-type-k`/`-v` | KV layout is fixed at load | Restart with a different recipe. |
+| `--mlock` | OS memory locking happens at startup | Restart. |
+| `--flash-attn` | Compiled into the inference path | Restart. |
+| `--reasoning` (`on`/`off`) | Server-wide policy | Restart with `--recipe thinking` (on), `--recipe agent` (off), or any other (server's `auto` default). |
+| Recipe context (`8192`/`16384`/...) | Same as `--ctx-size` | Pick a different recipe at serve time. |
+
+#### Parallel runs for parameter sweeps
+
+When you need multiple parameter profiles simultaneously, use `--name` to disambiguate (v1.5.0):
+
+```bash
+# Two qwen3 instances on the same model: agent for utility tasks,
+# thinking for harder problems. Pick the endpoint that fits the request.
+llamactl serve qwen3-1.7b --recipe agent    --detach --name qwen-agent
+llamactl serve qwen3-1.7b --recipe thinking --detach --name qwen-think
+```
+
+`llamactl status` will show both, each on its own port. Route requests in your client by hitting the matching endpoint URL.
+
+#### Custom recipe values (advanced)
+
+The shipped recipes cover the common cases. To use values outside them — say, `--ctx-size 24576` (between long-context's 32 768 and code's 16 384) — your options are:
+
+1. **Edit the recipe table in source and rebuild.** `internal/recipes/recipes.go` is a small Go map; add an entry, `go install ./cmd/llamactl`, serve. Best for power users who want the recipe persisted across machines.
+2. **Run a one-shot foreground serve.** llamactl doesn't currently expose ctx/KV/mlock as CLI flags, but the underlying `llama-server` does. If you need a one-off custom config, run `llama-server` directly with your flags — bypassing llamactl is supported (the binary is just `which llama-server`).
+
+If a particular custom-recipe pattern comes up repeatedly, that's a signal to add it to the shipped recipe table — open an issue.
 
 ---
 
