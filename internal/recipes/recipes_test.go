@@ -10,7 +10,7 @@ import (
 )
 
 func TestRecipesMapWellFormed(t *testing.T) {
-	want := []string{"chat", "code", "long-context", "low-memory", "agent"}
+	want := []string{"chat", "code", "long-context", "low-memory", "agent", "thinking"}
 	for _, name := range want {
 		r, ok := Recipes[name]
 		if !ok {
@@ -200,6 +200,35 @@ func TestFlagsFor_AgentRecipeBaseFlagsUnchanged(t *testing.T) {
 	}
 	if !argvHasFlag(args, "--mlock") {
 		t.Error("expected --mlock for agent on 64GB host with 4.4GB model")
+	}
+}
+
+// TestFlagsFor_ThinkingRecipePinsSamplingAndReasoningOn mirrors the
+// agent test but verifies the inverse reasoning state: same deterministic
+// sampling, --predict bumped to 4096, --reasoning on so the model thinks
+// before answering. Failing this test usually means the thinking entry
+// drifted from agent's shape without intent — re-check both before
+// "fixing."
+func TestFlagsFor_ThinkingRecipePinsSamplingAndReasoningOn(t *testing.T) {
+	args := FlagsFor(Recipes["thinking"], mkModel(32768), models.Q4_K_M, "/x",
+		mkHW(64), mkVer(4500), server.Capabilities{FlashAttnTristate: true}, 4.4, 8080, 10)
+
+	want := map[string]string{
+		"--temp":      "0",
+		"--top-p":     "1",
+		"--top-k":     "0",
+		"--predict":   "4096", // doubled vs agent — thinking eats budget
+		"--reasoning": "on",
+	}
+	for flag, expected := range want {
+		got, ok := argvFlag(args, flag)
+		if !ok {
+			t.Errorf("thinking recipe missing %s flag", flag)
+			continue
+		}
+		if got != expected {
+			t.Errorf("%s = %q, want %q", flag, got, expected)
+		}
 	}
 }
 
