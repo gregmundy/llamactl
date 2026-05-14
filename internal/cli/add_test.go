@@ -264,6 +264,82 @@ func TestAddHFPath_HappyPath(t *testing.T) {
 	}
 }
 
+// TestAddHFPath_AcceptsCommunityDynamicQuant covers the v1.5.1 fix: --quant
+// is a user-supplied filename hint, not a PreferenceOrder pick. Community
+// repos (unsloth, MaziyarPanahi, etc.) publish dynamic quants like Q3_K_XL,
+// Q8_K_XL, IQ3_XXS that `fit` happily recommends. Pre-v1.5.1 the add path
+// rejected them with "unknown --quant" even when the file existed in the
+// repo. The fix lets findQuantFile be the source of truth — only the
+// filename check matters, not the PreferenceOrder allowlist.
+func TestAddHFPath_AcceptsCommunityDynamicQuant(t *testing.T) {
+	body := mustGGUFBody(t, "qwen3", 8_000_000_000)
+	sum := sha256.Sum256(body)
+	shaHex := hex.EncodeToString(sum[:])
+
+	shared := t.TempDir()
+	configDir := t.TempDir()
+	hfc := &fakeHFClient{
+		Repos: map[string]hf.Repo{
+			"unsloth/Qwen3.5-9B-GGUF": {
+				ID: "unsloth/Qwen3.5-9B-GGUF",
+				Siblings: []hf.File{
+					{RFilename: "qwen3.5-9b-q3_k_xl.gguf", LFS: &hf.LFSInfo{SHA256: shaHex, Size: int64(len(body))}},
+				},
+			},
+		},
+		Bytes: map[string][]byte{
+			"unsloth/Qwen3.5-9B-GGUF/qwen3.5-9b-q3_k_xl.gguf": body,
+		},
+	}
+	dl := &fakeDownloader{HFClient: hfc}
+	store := newFakeModelStore()
+	d := &Deps{
+		HardwareDetector: fakeHardwareDetector{Info: hardware.Info{RAMBytes: 16 * (1 << 30)}},
+		HardwareJSONPath: filepath.Join(configDir, "hardware.json"),
+		HFClient:         hfc,
+		Downloader:       dl,
+		QuantSelector:    SelectorAdapter{},
+		ModelStore:       store,
+		FS:               OSFileSystem{},
+		ModelsConfigDir:  filepath.Join(configDir, "models"),
+		SharedModelsDir:  shared,
+		Now:              fakeNow,
+	}
+
+	if _, _, err := runRoot(t, d, "add", "unsloth/Qwen3.5-9B-GGUF", "--quant", "Q3_K_XL"); err != nil {
+		t.Fatalf("expected community dynamic quant to be accepted; got: %v", err)
+	}
+	got, ok := store.M["qwen3.5-9b"]
+	if !ok {
+		t.Fatalf("metadata not persisted; have: %v", keys(store.M))
+	}
+	if string(got.Quant) != "Q3_K_XL" {
+		t.Errorf("Quant = %q, want Q3_K_XL", got.Quant)
+	}
+}
+
+// TestAddHFPath_UnknownQuantErrorLists actual repo files, not a hardcoded
+// PreferenceOrder list. v1.5.1 dropped the PreferenceOrder gate; the error
+// message users see should reflect what's actually in the repo.
+func TestAddHFPath_UnknownQuantListsRepoContents(t *testing.T) {
+	body := mustGGUFBody(t, "qwen3", 8_000_000_000)
+	d, _, _, _, _ := makeHFPathDeps(t, body)
+	_, _, err := runRoot(t, d, "add", "Qwen/Qwen3-8B-Instruct-GGUF", "--quant", "Q9_FAKE")
+	if err == nil {
+		t.Fatal("expected error for nonexistent quant")
+	}
+	msg := err.Error()
+	if !strings.Contains(msg, "Q9_FAKE") {
+		t.Errorf("error should mention the requested quant; got: %v", err)
+	}
+	if !strings.Contains(msg, "available:") {
+		t.Errorf("error should list what IS available; got: %v", err)
+	}
+	if !strings.Contains(msg, "q4_k_m") && !strings.Contains(msg, "Q4_K_M") {
+		t.Errorf("error should list the real Q4_K_M sibling from the repo; got: %v", err)
+	}
+}
+
 func TestAddHFPath_DerivedIDStripsGGUFSuffix(t *testing.T) {
 	body := mustGGUFBody(t, "qwen3", 8_000_000_000)
 	d, _, _, store, _ := makeHFPathDeps(t, body)
