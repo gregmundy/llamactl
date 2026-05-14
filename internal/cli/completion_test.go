@@ -89,7 +89,7 @@ func TestCompletePreferredOrModelPathListsPreferredIDs(t *testing.T) {
 
 func TestCompleteRecipeNames(t *testing.T) {
 	got, _ := completeRecipeNames(&cobra.Command{}, nil, "")
-	want := []string{"agent", "chat", "code", "long-context", "low-memory"} // alphabetical
+	want := []string{"agent", "chat", "code", "long-context", "low-memory", "thinking"} // alphabetical
 	if !slices.Equal(got, want) {
 		t.Errorf("got %v, want %v", got, want)
 	}

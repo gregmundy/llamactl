@@ -82,6 +82,27 @@ var Recipes = map[string]Recipe{
 		},
 		Reasoning: "off",
 	},
+
+	// thinking: explicit deep-reasoning workloads on Qwen3 / DeepSeek-R1
+	// / future reasoning families. Same deterministic-sampling shape as
+	// agent (temp 0, top_p 1, top_k 0) so the chain-of-thought is
+	// reproducible across runs, but with --reasoning on so the model
+	// actually enters <think> blocks instead of jumping to a one-shot
+	// answer. Doubled NPredict (4096) gives the model room to think AND
+	// respond — internal reasoning can easily consume 1000-2000 tokens
+	// before the user-facing answer begins.
+	"thinking": {
+		Name: "thinking", CtxSize: 8192,
+		CacheTypeK: "f16", CacheTypeV: "f16",
+		MlockMode: MlockAuto,
+		Sampling: &Sampling{
+			Temperature: 0,
+			TopP:        1.0,
+			TopK:        0,
+			NPredict:    4096,
+		},
+		Reasoning: "on",
+	},
 }
 
 // FlagsFor assembles the llama-server argv. Inputs are read-only.

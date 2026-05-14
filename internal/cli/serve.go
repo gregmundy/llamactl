@@ -68,7 +68,7 @@ func newServeCmd(d *Deps) *cobra.Command {
 		},
 	}
 	cmd.Flags().IntVar(&port, "port", 8080, "TCP port for the OpenAI-compatible endpoint")
-	cmd.Flags().StringVar(&recipe, "recipe", recipes.DefaultRecipe, "chat | code | long-context | low-memory | agent")
+	cmd.Flags().StringVar(&recipe, "recipe", recipes.DefaultRecipe, "chat | code | long-context | low-memory | agent | thinking")
 	cmd.Flags().BoolVar(&detach, "detach", false, "register a launchd LaunchAgent and return")
 	cmd.Flags().StringVar(&draftID, "draft", "", "draft model id for speculative decoding (must be installed)")
 	cmd.Flags().StringVar(&runName, "name", "", "run name (defaults to <model-id>; lets you run the same model multiple times in parallel)")
