@@ -292,7 +292,7 @@ The detached path writes `~/Library/LaunchAgents/com.llamactl.<run-name>.plist`,
 
 **Flags:**
 - `--port <int>` — TCP port (default 8080). If occupied, llamactl scans `[port, port+100)` for a free one.
-- `--recipe <name>` — `chat` / `code` / `long-context` / `low-memory` / `agent` (default `chat`). See §5.
+- `--recipe <name>` — `chat` / `code` / `long-context` / `low-memory` / `agent` / `thinking` (default `chat`). See §5.
 - `--detach` — register as a launchd service and return.
 - `--draft <id>` — draft model id for speculative decoding (must be installed). See §9.
 - `--name <run-name>` — run name (default: model id). Lets you serve the same model multiple times in parallel at different recipes/ports. The plist, log file, and `stop`/`status` commands all key off this name.
@@ -482,15 +482,16 @@ Run `llamactl completion --help` for shell-specific notes from cobra.
 
 ## 5. Recipes
 
-A recipe is a named tuning bundle that maps to `llama-server` flags. Five ship as of v1.4.5:
+A recipe is a named tuning bundle that maps to `llama-server` flags. Six ship as of v1.5.4:
 
 | Recipe | Context | KV cache K/V | Mlock policy | Intended for |
 |---|---|---|---|---|
-| `chat` | 8 192 | f16 / f16 | auto | Interactive chat; default |
+| `chat` | 8 192 | f16 / f16 | auto | Interactive chat; default. Thinking-capable models auto-detect from template (llama-server default `--reasoning auto`). |
 | `code` | 16 384 | f16 / f16 | auto | Code assistance; doubled context |
 | `long-context` | 32 768 | q8_0 / q8_0 | auto | RAG, long-document QA; quantized KV for footprint |
 | `low-memory` | 4 096 | q4_0 / q4_0 | off | Constrained hosts (8 GB hosts); aggressive KV quantization |
-| `agent` | 8 192 | f16 / f16 | auto | Deterministic, non-interactive utility workloads (summarize / extract / classify / rewrite / agent offload) |
+| `agent` | 8 192 | f16 / f16 | auto | Deterministic, non-interactive utility workloads (summarize / extract / classify / rewrite / agent offload). Forces `--reasoning off`. |
+| `thinking` | 8 192 | f16 / f16 | auto | Deep-reasoning workloads on Qwen3 / DeepSeek-R1. Deterministic sampling like `agent` but with `--reasoning on` and doubled predict budget. |
 
 **Mlock auto** adds `--mlock` when usable RAM is at least 4 GB greater than the model's weight size. **Mlock off** never adds `--mlock` regardless of headroom (used by `low-memory`).
 
@@ -516,6 +517,25 @@ Recipes are pure-function over the main model only — speculative decoding's `-
 Callers can override any of these per-request via the OpenAI chat-completions body fields (`temperature`, `top_p`, `max_tokens`). Recipe settings are *defaults*, not enforcements.
 
 Pair `agent` with a small fast model (e.g. `qwen2.5-3b-instruct`, `qwen3-1.7b`) for offload duty. Larger models work fine too but the recipe was tuned around sub-3B utility workloads.
+
+### `thinking` recipe — additional flags
+
+`thinking` is the mirror of `agent`: same deterministic sampling shape (so the chain-of-thought is reproducible across runs), but with reasoning enabled and a larger predict budget to make room for the model's internal `<think>` blocks plus the user-facing answer.
+
+| Flag | Value | Why |
+|---|---|---|
+| `--temp` | `0` | Deterministic chain-of-thought; same prompt yields same reasoning path |
+| `--top-p` | `1.0` | No nucleus filter |
+| `--top-k` | `0` | Disabled |
+| `--predict` | `4096` | Doubled vs `agent` — thinking can consume 1000–2000 tokens before the user-facing answer begins |
+| `--reasoning` | `on` | Forces thinking on. Response splits into `message.reasoning_content` (the `<think>` block) and `message.content` (the answer). |
+
+Pair with a reasoning-capable model: `qwen3-1.7b`, `qwen3-0.6b`, or any Qwen3 / DeepSeek-R1 family model added via HF path. Non-reasoning models accept the flag but ignore it (no template-level thinking instruction).
+
+When to pick `agent` vs `thinking`:
+
+- **`agent`** — utility offload. You want the answer, fast, no chain-of-thought clutter, no token waste.
+- **`thinking`** — hard problems where the reasoning matters. You want to inspect or stream the model's thought process; you accept the latency.
 
 ---
 
@@ -816,6 +836,7 @@ The PRD called out the following as **out of scope** for v1. Re-elevation in lat
 | v1.5.1 | 2026-05-13 | Fix: `add --quant` now accepts any quant string the repo ships, not just the 7 canonical PreferenceOrder entries. Community dynamic quants like `Q3_K_XL`, `Q8_K_XL`, `IQ3_XXS` (which `fit` happily recommends) install cleanly. Error messages on truly missing quants now list what's actually in the repo. |
 | v1.5.2 | 2026-05-13 | Shell tab-completions: `serve`/`remove` complete to installed model ids; `stop` to running run names; `serve --recipe` to the 5 recipe names; `serve --draft` to installed ids (excluding the main); `config get`/`set` to the 6 config keys; `add` to preferred-id short names (suppressed once you type `/`); `fit --speculative` to installed model ids. Install via `llamactl completion zsh\|bash\|fish > <fpath>`. |
 | v1.5.3 | 2026-05-13 | `brew install gregmundy/tap/llamactl` now auto-installs all three shell completion scripts (bash / fish / zsh) into Homebrew's standard locations. Manual `llamactl completion zsh > ...` step no longer required for brew users. |
+| v1.5.4 | 2026-05-13 | New `thinking` recipe: deterministic sampling (mirrors `agent`) but with `--reasoning on` and `--predict 4096` so Qwen3 / DeepSeek-R1 models think before answering. Response splits into `message.reasoning_content` + `message.content`. |
 
 ---
 
