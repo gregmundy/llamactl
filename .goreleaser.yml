@@ -4,6 +4,15 @@ project_name: llamactl
 before:
   hooks:
     - go mod tidy
+    # v1.5.3: generate shell completion scripts at release time so the
+    # cask can ship them. `go run` against the source rather than the
+    # built binary because the build runs after `before.hooks` — the
+    # completion command's output doesn't depend on the version stamp,
+    # so a dev-built helper produces identical text.
+    - mkdir -p completions
+    - sh -c "go run ./cmd/llamactl completion bash > completions/llamactl.bash"
+    - sh -c "go run ./cmd/llamactl completion zsh  > completions/_llamactl"
+    - sh -c "go run ./cmd/llamactl completion fish > completions/llamactl.fish"
 
 builds:
   - id: llamactl
@@ -21,10 +30,11 @@ archives:
     ids:
       - llamactl
     name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
-    format: tar.gz
+    formats: [tar.gz]
     files:
       - LICENSE*
       - README.md
+      - completions/*
 
 checksum:
   name_template: "checksums.txt"
@@ -44,6 +54,10 @@ homebrew_casks:
   - name: llamactl
     binaries:
       - llamactl
+    completions:
+      bash: completions/llamactl.bash
+      zsh: completions/_llamactl
+      fish: completions/llamactl.fish
     repository:
       owner: gregmundy
       name: homebrew-tap
