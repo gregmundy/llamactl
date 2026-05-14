@@ -75,8 +75,11 @@ func (f fakeProberPhase3) Capabilities(_ context.Context, _ string) (server.Capa
 // canceling the parent context breaks the poll immediately.
 func TestRunServeDetachedHonorsCtxCancel(t *testing.T) {
 	d, ld, _ := makeServeDeps(t)
-	// Service never starts — Print always returns PID 0 (default).
+	// Service never starts — Print always returns PID 0. We need to
+	// disable the fake's "auto-populate PID on Load" behavior or the
+	// poll loop will succeed immediately and never exercise ctx cancel.
 	ld.Services = map[string]launchd.ServiceInfo{}
+	ld.NoAutoLoadPID = true
 
 	ctx, cancel := context.WithCancel(context.Background())
 	// Cancel shortly after we enter the poll loop.
@@ -415,7 +418,7 @@ func TestServeNoAPIKeyWhenUnset(t *testing.T) {
 }
 
 func TestRunServeDetachedSleepSeam(t *testing.T) {
-	d, _, _ := makeServeDeps(t)
+	d, ld, _ := makeServeDeps(t)
 
 	t0 := time.Date(2026, 5, 10, 12, 0, 0, 0, time.UTC)
 	callCount := 0
@@ -435,8 +438,10 @@ func TestRunServeDetachedSleepSeam(t *testing.T) {
 		return closed
 	}
 
-	// Service never starts (Print always returns PID=0).
-	// (fakeLaunchdService with empty Services map already does this.)
+	// Service never starts (Print always returns PID=0). Need to disable
+	// the fake's auto-populate-on-Load behavior or the poll exits
+	// immediately with a "started" message instead of testing the deadline.
+	ld.NoAutoLoadPID = true
 
 	done := make(chan error, 1)
 	go func() {
@@ -662,5 +667,103 @@ func TestServeDetachedDraftEmbedsInPlist(t *testing.T) {
 	}
 	if gotPath != draftPath {
 		t.Errorf("HasDraft path=%q, want %q", gotPath, draftPath)
+	}
+}
+
+// --- v1.5.0: run names + bootout race ---
+
+// TestServeDefaultsNameToModelID confirms the single-instance UX is
+// preserved: omitting --name uses model id, so plist and log paths
+// match the pre-v1.5.0 convention. Anyone scripting against the old
+// behavior keeps working.
+func TestServeDefaultsNameToModelID(t *testing.T) {
+	d, _, _ := makeServeDeps(t)
+	_, _, err := runRoot(t, d, "serve", "qwen2.5-7b-instruct", "--detach")
+	if err != nil {
+		t.Fatalf("serve: %v", err)
+	}
+	plistPath := filepath.Join(d.LaunchAgentsDir, "com.llamactl.qwen2.5-7b-instruct.plist")
+	if _, err := os.Stat(plistPath); err != nil {
+		t.Errorf("plist not at default-name path: %v", err)
+	}
+}
+
+// TestServeWithExplicitNameWritesDistinctPlist is the primary v1.5.0
+// feature test: --name foo derives label com.llamactl.foo, distinct
+// from the model-id-named default.
+func TestServeWithExplicitNameWritesDistinctPlist(t *testing.T) {
+	d, _, _ := makeServeDeps(t)
+	_, _, err := runRoot(t, d, "serve", "qwen2.5-7b-instruct", "--detach", "--name", "agent-1")
+	if err != nil {
+		t.Fatalf("serve: %v", err)
+	}
+	wantPath := filepath.Join(d.LaunchAgentsDir, "com.llamactl.agent-1.plist")
+	if _, err := os.Stat(wantPath); err != nil {
+		t.Errorf("plist not at --name path %s: %v", wantPath, err)
+	}
+	// The default-name path should NOT exist — the run uses agent-1.
+	defaultPath := filepath.Join(d.LaunchAgentsDir, "com.llamactl.qwen2.5-7b-instruct.plist")
+	if _, err := os.Stat(defaultPath); err == nil {
+		t.Errorf("unexpected plist at default-name path %s", defaultPath)
+	}
+}
+
+// TestServeTwoNamesSameModelCoexist verifies the multi-instance use
+// case from the v1.5.0 user report: same model, two --name values,
+// both run in parallel with distinct plists.
+func TestServeTwoNamesSameModelCoexist(t *testing.T) {
+	d, _, _ := makeServeDeps(t)
+	if _, _, err := runRoot(t, d, "serve", "qwen2.5-7b-instruct", "--detach", "--name", "chat-run"); err != nil {
+		t.Fatalf("first serve: %v", err)
+	}
+	if _, _, err := runRoot(t, d, "serve", "qwen2.5-7b-instruct", "--detach", "--name", "agent-run"); err != nil {
+		t.Fatalf("second serve: %v", err)
+	}
+	for _, name := range []string{"chat-run", "agent-run"} {
+		p := filepath.Join(d.LaunchAgentsDir, "com.llamactl."+name+".plist")
+		if _, err := os.Stat(p); err != nil {
+			t.Errorf("plist for %s missing: %v", name, err)
+		}
+	}
+}
+
+// TestServeRejectsInvalidName: validation catches launchd-unsafe names.
+func TestServeRejectsInvalidName(t *testing.T) {
+	d, _, _ := makeServeDeps(t)
+	// Empty --name is intentionally treated as "no flag" and falls back
+	// to the model id (which validates fine). The bad cases here all
+	// fail the launchd-safe-charset / leading-alphanumeric rules.
+	bad := []string{
+		"has spaces",
+		"slash/here",
+		".dot-prefix",
+		"-dash-prefix",
+	}
+	for _, name := range bad {
+		_, _, err := runRoot(t, d, "serve", "qwen2.5-7b-instruct", "--detach", "--name", name)
+		if err == nil {
+			t.Errorf("name %q should have been rejected", name)
+		}
+	}
+}
+
+// TestServeSameNameSecondTimeReplacesAtomically pins the v1.5.0 bootout
+// race fix: re-serving the same name booots out the existing service,
+// waits for launchctl teardown, then re-bootstraps. Pre-v1.5.0 this
+// exit-5'd on the bootstrap because Bootout was async.
+func TestServeSameNameSecondTimeReplacesAtomically(t *testing.T) {
+	d, ld, _ := makeServeDeps(t)
+	// First serve.
+	if _, _, err := runRoot(t, d, "serve", "qwen2.5-7b-instruct", "--detach"); err != nil {
+		t.Fatalf("first serve: %v", err)
+	}
+	beforeBooted := len(ld.Booted)
+	// Second serve (same name; default = model id).
+	if _, _, err := runRoot(t, d, "serve", "qwen2.5-7b-instruct", "--detach"); err != nil {
+		t.Fatalf("second serve: %v", err)
+	}
+	// Bootout must have been called exactly once between the two serves.
+	if got := len(ld.Booted) - beforeBooted; got != 1 {
+		t.Errorf("Booted growth = %d, want 1 (existing service should have been bootouted)", got)
 	}
 }
