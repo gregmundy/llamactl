@@ -107,9 +107,17 @@ gh run watch <release-run-id> --exit-status
 
 brew update && time brew upgrade llamactl
 /opt/homebrew/bin/llamactl --version  # confirm new tag
+
+# IMPORTANT: also check the CI workflow is green, not just the release one.
+# CI runs on every push to main; release runs only on tag pushes. They use
+# different workflows and the release path doesn't gate on gofmt — so a
+# doc-comment formatting drift can leave CI red while brew keeps publishing.
+gh run list --workflow=CI --limit 3
 ```
 
 CI uses `actions/checkout@v5`, `actions/setup-go@v6`, `goreleaser/goreleaser-action@v7` (Node 24). Don't downgrade.
+
+**Local `gofmt -l .` is the source of truth — read its output carefully.** Go 1.26's gofmt is stricter than 1.21's on doc comments (indented lines need blank-line padding to render as code blocks in godoc). A non-empty output line means *that file* needs `gofmt -w`. CI fails fast on this; don't push past it.
 
 After release: update `project_state.md` memory with what shipped + any new deferred concerns. Update `MEMORY.md` index pointer. Update `docs/MANUAL.md` version table.
 

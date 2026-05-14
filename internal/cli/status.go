@@ -130,7 +130,9 @@ func runStatus(ctx context.Context, d *Deps, asJSON bool) error {
 
 // readModelIDFromPlist extracts the model id from the plist's `--model
 // <path>` argument. The path follows the convention
-//   ~/.local/share/llama-models/<id>/<quant>.gguf
+//
+//	~/.local/share/llama-models/<id>/<quant>.gguf
+//
 // so the parent directory of the file IS the model id. Returns "" if
 // the plist is missing, malformed, or the --model arg can't be parsed.
 func readModelIDFromPlist(plistPath string) string {
