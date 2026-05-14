@@ -1,7 +1,7 @@
 # llamactl — User Manual
 
-**Version:** v1.4.1
-**Date:** 2026-05-12
+**Version:** v1.5.4
+**Date:** 2026-05-13
 **Audience:** Product manager sign-off + end users.
 
 This document describes every user-facing capability of `llamactl`: every command, every flag, every configuration key, every doctor check, and every storage location. It maps the implemented surface to the PRD v1.5 acceptance criteria so reviewers can confirm scope was met.
@@ -54,7 +54,7 @@ The cask installs the static binary at `/opt/homebrew/bin/llamactl` (Apple Silic
 Verify:
 ```bash
 llamactl --version
-# llamactl version v1.4.1
+# llamactl version v1.5.4
 ```
 
 ### From source
@@ -169,18 +169,17 @@ $ llamactl search qwen 2.5 7b
 Search HF and rank GGUF variants by fit on this host. Combines HF search with per-quant size estimates and verdicts.
 
 ```
-$ llamactl fit qwen 2.5 3b
-REPO                                  QUANT    SIZE     FREE     VERDICT  NOTE
-Qwen/Qwen2.5-3B-Instruct-GGUF         Q5_K_M   2.2 GB   12.5 GB  ✓ ok
-Qwen/Qwen2.5-3B-Instruct-GGUF         Q4_K_M   1.9 GB   12.8 GB  ✓ ok
-bartowski/Qwen2.5-3B-Instruct-GGUF    Q5_K_M   2.2 GB   12.5 GB  ✓ ok
-...
+$ llamactl fit qwen 2.5 3b --limit 3
+RECOMMENDED  REPO                                                  QUANT  SIZE    VERDICT  NOTES
+   ✓         bartowski/Qwen2.5-Coder-3B-Instruct-GGUF              Q8_0   3.3 GB  ok       6 GB free
+   ✓         bartowski/Qwen2.5-3B-Instruct-GGUF                    Q8_0   3.3 GB  ok       6 GB free
+   ✓         bartowski/Qwen2.5-Coder-3B-Instruct-abliterated-GGUF  Q8_0   3.3 GB  ok       6 GB free
 ```
 
-**Verdicts:**
-- `✓ ok` — fits with headroom (default 4 GB free after weights + KV cache)
-- `⚠ tight` — fits but uses most of the budget
-- `✗ too-big` — doesn't fit on this host
+**Columns:**
+- `RECOMMENDED` — `✓` (fits with headroom), `⚠` (tight), or `✗` (too big)
+- `VERDICT` — `ok` / `tight` / `too-big`
+- `NOTES` — free RAM after weights + KV cache, or the deficit when it doesn't fit
 
 **Sorting:**
 - Within `ok`: popularity-weighted (Hugging Face download count)
@@ -610,7 +609,7 @@ If a particular custom-recipe pattern comes up repeatedly, that's a signal to ad
 
 ## 6. Preferred model IDs
 
-11 short-ids ship in v1.4.1's curated table. Each entry maps to an HF repo + canonical `Arch` / `ParamsB` / `MaxCtx`. Using a preferred-id with `llamactl add` skips the `--quant` flag (selector picks automatically based on host RAM).
+12 short-ids ship in the curated table. Each entry maps to an HF repo + canonical `Arch` / `ParamsB` / `MaxCtx`. Using a preferred-id with `llamactl add` skips the `--quant` flag (selector picks automatically based on host RAM).
 
 | Short ID | HF Repo | Family | ParamsB | MaxCtx |
 |---|---|---|---|---|
@@ -714,10 +713,10 @@ Per v1.4.4, the config path is wired correctly — earlier versions persisted th
 └── last-version-check.json  # Update-check cache (24h TTL)
 
 ~/Library/LaunchAgents/
-└── com.llamactl.<model-id>.plist  # One per detached service
+└── com.llamactl.<run-name>.plist  # One per detached service (run-name defaults to model id; --name overrides per v1.5.0)
 
 ~/Library/Logs/llamactl/
-└── <model-id>.log           # Rotated at 10 MiB; up to 3 backups (.log.1, .log.2, .log.3)
+└── <run-name>.log           # Rotated at 10 MiB; up to 3 backups (.log.1, .log.2, .log.3)
 ```
 
 ### Metadata format
@@ -845,7 +844,7 @@ Checks 1, 2, 11–14 may report informational messages on a `✓` pass (e.g., "(
 
 ## 12. PRD v1.5 acceptance criteria — status
 
-The PRD lists 16 acceptance criteria. All 16 are met as of v1.4.1.
+The PRD lists 16 acceptance criteria. All 16 are met as of v1.5.4.
 
 | AC # | Description | Status |
 |---|---|---|
@@ -935,7 +934,7 @@ The PRD called out the following as **out of scope** for v1. Re-elevation in lat
 1. `--port N` (or `default_port` config; or 8080 if unset) is the preferred port.
 2. If preferred port is bound by any process, scan `[preferred, preferred+100)` for the first free port.
 3. Sibling `com.llamactl.*` plists' ports are added to the skip list before binding (prevents two simultaneous detached serves from racing onto the same port during model load).
-4. Re-serving the same model id excludes its own current port from the skip list (keeps the same port across re-serves).
+4. Re-serving the same run name excludes its own current port from the skip list (keeps the same port across re-serves; run name defaults to model id per v1.5.0).
 
 ### 15.4 File paths reference
 
@@ -950,8 +949,8 @@ The PRD called out the following as **out of scope** for v1. Re-elevation in lat
 ~/.cache/llamactl/hf-search-v1/                  # HF search cache
 ~/.cache/llamactl/hf-repo-v2/                    # HF repo-info cache
 ~/.cache/llamactl/last-version-check.json        # Update-check cache
-~/Library/LaunchAgents/com.llamactl.<id>.plist   # Per-service launchd plist
-~/Library/Logs/llamactl/<id>.log                 # Per-service log (10 MiB rotation)
+~/Library/LaunchAgents/com.llamactl.<run-name>.plist   # Per-service launchd plist
+~/Library/Logs/llamactl/<run-name>.log                 # Per-service log (10 MiB rotation)
 ```
 
 ### 15.5 Glossary
