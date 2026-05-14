@@ -227,7 +227,7 @@ installed qwen2.5-3b-instruct (Q5_K_M, 2.3 GiB) ->
 - HF path: `llamactl add Qwen/Qwen2.5-3B-Instruct-GGUF --quant Q5_K_M` — any HF GGUF repo
 
 **Flags:**
-- `--quant <name>` — override automatic quant selection. Allowed: `Q5_K_M`, `Q4_K_M`, `Q4_K_S`, `IQ4_XS`, `IQ3_M`, `IQ3_XS`, `Q2_K`
+- `--quant <name>` — override automatic quant selection. Any quant string the repo actually ships is accepted, including community dynamic quants like `Q3_K_XL`, `Q8_K_XL`, `IQ3_XXS`. If the named quant isn't in the repo, the error lists the actual available siblings. (Llamactl's *automatic* selection — when `--quant` is omitted — picks from `Q5_K_M`, `Q4_K_M`, `Q4_K_S`, `IQ4_XS`, `IQ3_M`, `IQ3_XS`, `Q2_K` in descending quality order; see §10.)
 - `--ctx <int>` — target context size for quant calculation (default 8192)
 
 **SHA dedupe:** if the same GGUF (matching SHA256) is already on disk at the canonical path, `add` skips the download and only writes the metadata.
@@ -772,6 +772,7 @@ The PRD called out the following as **out of scope** for v1. Re-elevation in lat
 | v1.4.5 | 2026-05-13 | New `agent` recipe for deterministic utility workloads (summarize / extract / classify / rewrite). Pins `--temp 0`, `--top-p 1.0`, `--top-k 0`, `--predict 2048`, `--reasoning off` — the last flag disables thinking on reasoning models so they return non-empty content instead of burning the budget inside `<think>` blocks. |
 | v1.4.6 | 2026-05-13 | Fix: starting a second `serve --detach` could occasionally hand the new service a port the first one already held (Darwin `net.Listen` lying about availability under SO_REUSEADDR). `FreePort` now Dial-probes 127.0.0.1 to confirm no active listener before committing. |
 | v1.5.0 | 2026-05-13 | `--name` flag on `serve` for parallel runs of the same model (e.g. same Qwen2.5-7B at `--recipe long-context --name qwen-rag` AND `--recipe agent --name qwen-utils`). Default name = model id, so single-instance UX is unchanged. Fix: re-serving the same name now waits for `launchctl bootout` to fully tear down before re-bootstrapping (was exit-5'ing intermittently). `status` grows NAME and MODEL-ID columns. `stop` takes a run name. |
+| v1.5.1 | 2026-05-13 | Fix: `add --quant` now accepts any quant string the repo ships, not just the 7 canonical PreferenceOrder entries. Community dynamic quants like `Q3_K_XL`, `Q8_K_XL`, `IQ3_XXS` (which `fit` happily recommends) install cleanly. Error messages on truly missing quants now list what's actually in the repo. |
 
 ---
 
