@@ -29,14 +29,23 @@ type ProcInspector interface {
 	Uptime(pid int) (time.Duration, error)
 }
 
+// PIDResolver returns the live PID for a launchd label, or 0 when the
+// service isn't loaded. Wraps `launchctl print`.
+type PIDResolver interface {
+	Print(ctx context.Context, label string) (launchd.ServiceInfo, error)
+}
+
 // Poller scrapes each running backend on a tick. Fields must be set
-// before Run is called.
+// before Run is called. LaunchdService and ProcInspector are optional;
+// when nil the response's memory_bytes and uptime_seconds remain zero.
 type Poller struct {
-	State      *State
-	Lister     Lister
-	PlistDir   string
-	HTTPClient *http.Client
-	Interval   time.Duration
+	State          *State
+	Lister         Lister
+	LaunchdService PIDResolver
+	ProcInspector  ProcInspector
+	PlistDir       string
+	HTTPClient     *http.Client
+	Interval       time.Duration
 	// BaseURLFn lets tests redirect requests to httptest URLs while
 	// production builds use http://127.0.0.1:<port>.
 	BaseURLFn func(port int) string
@@ -79,6 +88,22 @@ func (p *Poller) tickOnce(ctx context.Context) {
 			base := p.BaseURLFn(svc.Port)
 			sample := Scrape(scrapeCtx, p.HTTPClient, base, svc.Port)
 			sample.Recipe = recipes.IdentifyFromArgv(svc.Args)
+
+			// Per-PID enrichment (memory + uptime). Skipped when
+			// LaunchdService or ProcInspector is nil — keeps the
+			// tests that use only fakeLister working.
+			if p.LaunchdService != nil && p.ProcInspector != nil {
+				label := "com.llamactl." + svc.ID
+				if info, err := p.LaunchdService.Print(scrapeCtx, label); err == nil && info.PID > 0 {
+					if rss, err := p.ProcInspector.RSS(info.PID); err == nil {
+						sample.MemoryBytes = rss
+					}
+					if uptime, err := p.ProcInspector.Uptime(info.PID); err == nil {
+						sample.UptimeSeconds = int64(uptime.Seconds())
+					}
+				}
+			}
+
 			p.State.Update(svc.ID, sample)
 		}(svc)
 	}

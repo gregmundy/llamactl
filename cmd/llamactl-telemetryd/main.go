@@ -18,7 +18,10 @@ import (
 	"time"
 
 	"github.com/gregmundy/llamactl/internal/config"
+	"github.com/gregmundy/llamactl/internal/launchd"
 	"github.com/gregmundy/llamactl/internal/models"
+	"github.com/gregmundy/llamactl/internal/proc"
+	"github.com/gregmundy/llamactl/internal/runner"
 	"github.com/gregmundy/llamactl/internal/telemetry"
 )
 
@@ -95,13 +98,16 @@ func run() error {
 	modelsDir := paths.ModelsMetaDir()
 
 	httpClient := &http.Client{} // per-request timeout enforced in Scrape via context
+	run := runner.ExecRunner{}
 	poller := &telemetry.Poller{
-		State:      state,
-		Lister:     telemetry.LaunchdLister{},
-		PlistDir:   launchAgentsDir,
-		HTTPClient: httpClient,
-		Interval:   interval,
-		BaseURLFn:  telemetry.DefaultBaseURL,
+		State:          state,
+		Lister:         telemetry.LaunchdLister{},
+		LaunchdService: &launchd.Service{Runner: run, UID: os.Getuid()},
+		ProcInspector:  &proc.Inspector{Runner: run},
+		PlistDir:       launchAgentsDir,
+		HTTPClient:     httpClient,
+		Interval:       interval,
+		BaseURLFn:      telemetry.DefaultBaseURL,
 	}
 
 	listInstalled := func() []models.Metadata {
