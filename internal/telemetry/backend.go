@@ -12,16 +12,23 @@ import (
 // and returns a Sample. baseURL must not include a trailing slash.
 // The caller owns the *http.Client (used for testing with httptest).
 //
+// apiKey, when non-empty, is sent as `Authorization: Bearer <apiKey>`
+// on every request. Required when llamactl is configured with `api_key`
+// — `serve --detach` then passes `--api-key` to each llama-server,
+// which gates /health, /slots, and /metrics on Bearer auth. The
+// telemetry daemon uses the same key as both consumer-of-self and
+// consumer-of-backends.
+//
 // State derivation rules (see spec §5.4):
 //   - any error before metrics → "unreachable"
 //   - health 503 → "loading"
 //   - metrics 501 → "metrics_disabled" (idle/active still derivable from /slots)
 //   - requests_processing > 0 OR any slot is_processing → "active"
 //   - otherwise → "idle"
-func Scrape(ctx context.Context, client *http.Client, baseURL string, port int) Sample {
+func Scrape(ctx context.Context, client *http.Client, baseURL string, port int, apiKey string) Sample {
 	sample := Sample{ScrapedAt: time.Now(), Port: port}
 
-	healthCode, _, err := fetch(ctx, client, baseURL+"/health")
+	healthCode, _, err := fetch(ctx, client, baseURL+"/health", apiKey)
 	if err != nil {
 		sample.State = "unreachable"
 		sample.ScrapeError = err.Error()
@@ -33,11 +40,11 @@ func Scrape(ctx context.Context, client *http.Client, baseURL string, port int) 
 	}
 
 	slotsState := SlotsState{}
-	if _, body, err := fetch(ctx, client, baseURL+"/slots"); err == nil {
+	if _, body, err := fetch(ctx, client, baseURL+"/slots", apiKey); err == nil {
 		slotsState, _ = ParseSlots(body)
 	}
 
-	metricsCode, body, err := fetch(ctx, client, baseURL+"/metrics")
+	metricsCode, body, err := fetch(ctx, client, baseURL+"/metrics", apiKey)
 	switch {
 	case err != nil:
 		sample.State = "unreachable"
@@ -68,10 +75,14 @@ func Scrape(ctx context.Context, client *http.Client, baseURL string, port int) 
 }
 
 // fetch propagates context, reads the full body, returns (status, body, err).
-func fetch(ctx context.Context, client *http.Client, url string) (int, []byte, error) {
+// When apiKey is non-empty an Authorization: Bearer header is added.
+func fetch(ctx context.Context, client *http.Client, url, apiKey string) (int, []byte, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		return 0, nil, err
+	}
+	if apiKey != "" {
+		req.Header.Set("Authorization", "Bearer "+apiKey)
 	}
 	resp, err := client.Do(req)
 	if err != nil {
