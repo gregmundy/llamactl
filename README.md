@@ -176,21 +176,55 @@ curl -H "Authorization: Bearer sk-your-token-here" \
 
 `llamactl-telemetryd` is an optional sidecar daemon that exposes a JSON endpoint summarizing installed and running models. Useful for personal dashboards, status widgets, or any external API that wants visibility into what the host is doing.
 
-Enable it (requires `api_key` when binding publicly):
+### Enabling the daemon
+
+The daemon defaults to binding `0.0.0.0:18080` so any host on your Tailnet can reach it. Override per-key with `telemetry_host`, `telemetry_port`, `telemetry_interval`.
 
 ```sh
-llamactl config set api_key sk-your-token-here
-llamactl telemetry enable
+llamactl telemetry enable      # writes plist, starts launchd service
+llamactl telemetry status      # show pid/host/port
+llamactl telemetry disable     # stop and remove the plist
 ```
 
-The daemon listens on `0.0.0.0:18080` by default. Override per-key with `telemetry_host`, `telemetry_port`, `telemetry_interval`.
+### Authentication
 
-Fetch the current snapshot:
+The telemetry endpoint reuses the same `api_key` as the chat endpoint (see [Authentication](#authentication) above). Behavior:
+
+- **Public bind (`0.0.0.0`, the default):** `api_key` is **required**. `telemetry enable` refuses to start the daemon without one; the error message points at `llamactl config set api_key <token>` or switching to a local-only bind.
+- **Local-only bind (`127.0.0.1`):** `api_key` is optional. If unset, the endpoint is unauthenticated (only reachable from the same host).
+- **Precedence:** `LLAMACTL_API_KEY` env var > `api_key` in `config.yaml`. The env var is read by the launchd-managed daemon at startup; setting it in your shell doesn't propagate unless you add it to the plist via `EnvironmentVariables`.
+
+Choose a token yourself — any string works; the convention `sk-...` is borrowed from OpenAI but is not enforced.
+
+Three setup recipes:
+
+```sh
+# 1. Public bind on Tailnet, persistent token in config
+llamactl config set api_key sk-your-token-here
+llamactl telemetry enable
+
+# 2. Local-only, no auth — for development on the same host
+llamactl config set telemetry_host 127.0.0.1
+llamactl telemetry enable
+
+# 3. Public bind with env-var token (useful in CI / ephemeral contexts)
+LLAMACTL_API_KEY=sk-ephemeral-xyz llamactl telemetry enable
+# Note: the launchd-managed process inherits its environment from launchctl,
+# not your shell. For persistent env-var auth, edit the plist or just use (1).
+```
+
+`llamactl doctor` warns when the telemetry plist exists, binds publicly, and `api_key` is unset; and when the plist exists but the port is unreachable.
+
+### Calling the endpoint
 
 ```sh
 curl -H "Authorization: Bearer sk-your-token-here" \
   http://llm-mini.tailnet.ts.net:18080/v1/telemetry
 ```
+
+A missing or wrong `Authorization` header against an auth-enabled daemon returns `401 {"error":"unauthorized"}`.
+
+`/health` is always unauthenticated (mirrors `llama-server`'s `/health`) for use as an external healthcheck.
 
 Response shape:
 
@@ -219,15 +253,6 @@ Response shape:
 `tokens_per_second` is a rolling rate computed over the most recent `telemetry_interval` (default 2 s). It is `null` immediately after enable (no prior sample to delta against), and `0.0` when no generation has happened between two polls.
 
 `state` enumerates `idle | active | loading | metrics_disabled | unreachable`.
-
-Management:
-
-```sh
-llamactl telemetry status     # show pid/port/host
-llamactl telemetry disable    # stop and remove the plist
-```
-
-`llamactl doctor` flags telemetry misconfigurations as part of its 15 checks.
 
 ## Reference
 
