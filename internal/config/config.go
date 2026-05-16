@@ -19,6 +19,14 @@ type Config struct {
 	HFToken         string `yaml:"hf_token"`
 	LogLevel        string `yaml:"log_level"`
 	APIKey          string `yaml:"api_key"`
+
+	// Telemetry sidecar (llamactl-telemetryd) configuration. Defaults
+	// applied at use time when zero: port=18080, host=0.0.0.0,
+	// interval=2s. Interval is stored as a string so YAML stays
+	// human-readable; parsed via time.ParseDuration on use.
+	TelemetryPort     int    `yaml:"telemetry_port"`
+	TelemetryHost     string `yaml:"telemetry_host"`
+	TelemetryInterval string `yaml:"telemetry_interval"`
 }
 
 // Load reads path and returns the parsed Config. A missing file is not an
