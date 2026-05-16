@@ -24,11 +24,21 @@ builds:
     goarch: [arm64]
     ldflags:
       - -s -w -X main.llamactlVersion=v{{.Version}}
+  - id: llamactl-telemetryd
+    main: ./cmd/llamactl-telemetryd
+    binary: llamactl-telemetryd
+    env:
+      - CGO_ENABLED=0
+    goos: [darwin]
+    goarch: [arm64]
+    ldflags:
+      - -s -w -X main.telemetrydVersion=v{{.Version}}
 
 archives:
   - id: default
     ids:
       - llamactl
+      - llamactl-telemetryd
     name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
     formats: [tar.gz]
     files:
@@ -54,6 +64,7 @@ homebrew_casks:
   - name: llamactl
     binaries:
       - llamactl
+      - llamactl-telemetryd
     completions:
       bash: completions/llamactl.bash
       zsh: completions/_llamactl
