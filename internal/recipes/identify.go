@@ -6,13 +6,13 @@ import "fmt"
 // match args, or "" when no recipe can be unambiguously identified.
 //
 // Two-pass match strategy:
-//   1. Exact match on CtxSize + CacheTypeK + CacheTypeV + Reasoning.
-//      Handles all 6 stock recipes when ctx isn't clamped.
-//   2. Fallback on CacheTypeK + CacheTypeV + Reasoning when the cache
-//      combo uniquely identifies a recipe. Handles the
-//      "long-context clamped to a small MaxCtx" case (q8_0/q8_0 is
-//      unique). When the fallback would be ambiguous (e.g. chat vs
-//      code both serve f16/f16 with no reasoning), returns "".
+//  1. Exact match on CtxSize + CacheTypeK + CacheTypeV + Reasoning.
+//     Handles all 6 stock recipes when ctx isn't clamped.
+//  2. Fallback on CacheTypeK + CacheTypeV + Reasoning when the cache
+//     combo uniquely identifies a recipe. Handles the
+//     "long-context clamped to a small MaxCtx" case (q8_0/q8_0 is
+//     unique). When the fallback would be ambiguous (e.g. chat vs
+//     code both serve f16/f16 with no reasoning), returns "".
 //
 // Used by the telemetry sidecar to populate the `recipe` field per
 // running service. Best-effort by design — customized recipes and
