@@ -172,6 +172,63 @@ curl -H "Authorization: Bearer sk-your-token-here" \
 
 `llamactl doctor` warns when a service binds publicly (`0.0.0.0`) without an `api_key` configured. `llamactl config list` redacts `api_key` and `hf_token` as `********`.
 
+## Telemetry API
+
+`llamactl-telemetryd` is an optional sidecar daemon that exposes a JSON endpoint summarizing installed and running models. Useful for personal dashboards, status widgets, or any external API that wants visibility into what the host is doing.
+
+Enable it (requires `api_key` when binding publicly):
+
+```sh
+llamactl config set api_key sk-your-token-here
+llamactl telemetry enable
+```
+
+The daemon listens on `0.0.0.0:18080` by default. Override per-key with `telemetry_host`, `telemetry_port`, `telemetry_interval`.
+
+Fetch the current snapshot:
+
+```sh
+curl -H "Authorization: Bearer sk-your-token-here" \
+  http://llm-mini.tailnet.ts.net:18080/v1/telemetry
+```
+
+Response shape:
+
+```json
+{
+  "generated_at": "2026-05-16T14:23:11Z",
+  "installed": [
+    {"id":"qwen2.5-3b-instruct","params_b":3.0,"quant":"Q5_K_M","size_bytes":2469606195}
+  ],
+  "running": [
+    {
+      "id":"qwen2.5-3b-instruct",
+      "port":8082,
+      "recipe":"chat",
+      "size_bytes":2469606195,
+      "memory_bytes":695894016,
+      "state":"idle",
+      "tokens_per_second":0.0,
+      "tokens_predicted_total":1280,
+      "uptime_seconds":3621
+    }
+  ]
+}
+```
+
+`tokens_per_second` is a rolling rate computed over the most recent `telemetry_interval` (default 2 s). It is `null` immediately after enable (no prior sample to delta against), and `0.0` when no generation has happened between two polls.
+
+`state` enumerates `idle | active | loading | metrics_disabled | unreachable`.
+
+Management:
+
+```sh
+llamactl telemetry status     # show pid/port/host
+llamactl telemetry disable    # stop and remove the plist
+```
+
+`llamactl doctor` flags telemetry misconfigurations as part of its 15 checks.
+
 ## Reference
 
 ### Storage paths
