@@ -232,6 +232,19 @@ func TestFlagsFor_ThinkingRecipePinsSamplingAndReasoningOn(t *testing.T) {
 	}
 }
 
+// TestFlagsFor_AllRecipesIncludeMetrics — the telemetry sidecar reads
+// /metrics on every backend; this regression guard ensures no recipe
+// can quietly drop the flag.
+func TestFlagsFor_AllRecipesIncludeMetrics(t *testing.T) {
+	for name := range Recipes {
+		args := FlagsFor(Recipes[name], mkModel(32768), models.Q4_K_M, "/x",
+			mkHW(64), mkVer(4500), server.Capabilities{FlashAttnTristate: true}, 4.4, 8080, 10)
+		if !argvHasFlag(args, "--metrics") {
+			t.Errorf("recipe %q missing --metrics", name)
+		}
+	}
+}
+
 // TestFlagsFor_ExistingRecipesDoNotEmitNewFlags is the regression guard
 // for chat/code/long-context/low-memory: none of them should suddenly
 // inherit --temp/--top-p/--top-k/--predict/--reasoning flags. The new

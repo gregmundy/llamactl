@@ -661,6 +661,61 @@ func TestAuthCheckStoppedServiceSkipped(t *testing.T) {
 	}
 }
 
+func TestTelemetryAuthCheck_NotEnabled(t *testing.T) {
+	tempDir := t.TempDir()
+	deps := &Deps{
+		LaunchAgentsDir: tempDir,
+		Config:          &config.Config{},
+		Getenv:          func(string) string { return "" },
+	}
+	check := telemetryAuthCheck(deps)
+	ok, detail := check.run(context.Background(), deps)
+	if !ok {
+		t.Fatalf("expected ✓ when telemetry not enabled, got detail=%q", detail)
+	}
+	if !strings.Contains(detail, "not enabled") {
+		t.Errorf("detail = %q, want 'not enabled'", detail)
+	}
+}
+
+func TestTelemetryAuthCheck_PublicNoKey(t *testing.T) {
+	tempDir := t.TempDir()
+	plistPath := filepath.Join(tempDir, launchd.TelemetrydLabel+".plist")
+	if err := os.WriteFile(plistPath, []byte("<plist/>"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	deps := &Deps{
+		LaunchAgentsDir: tempDir,
+		Config:          &config.Config{TelemetryHost: "0.0.0.0", TelemetryPort: 18080},
+		Getenv:          func(string) string { return "" },
+	}
+	check := telemetryAuthCheck(deps)
+	ok, detail := check.run(context.Background(), deps)
+	if ok {
+		t.Fatalf("expected ✗ for public bind without api_key; detail=%q", detail)
+	}
+}
+
+func TestTelemetryAuthCheck_PlistPresentNotResponding(t *testing.T) {
+	tempDir := t.TempDir()
+	plistPath := filepath.Join(tempDir, launchd.TelemetrydLabel+".plist")
+	if err := os.WriteFile(plistPath, []byte("<plist/>"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// Loopback bind with no api_key is fine; but the port (1) won't be
+	// listening, so the dial-probe should fail.
+	deps := &Deps{
+		LaunchAgentsDir: tempDir,
+		Config:          &config.Config{TelemetryHost: "127.0.0.1", TelemetryPort: 1},
+		Getenv:          func(string) string { return "" },
+	}
+	check := telemetryAuthCheck(deps)
+	ok, detail := check.run(context.Background(), deps)
+	if ok {
+		t.Fatalf("expected ✗ when port not responding; detail=%q", detail)
+	}
+}
+
 func TestLatestVersionCheckOnLatest(t *testing.T) {
 	tempDir := t.TempDir()
 	raw, _ := json.Marshal(versionCache{Latest: "1.3.0", CheckedAt: time.Now()})

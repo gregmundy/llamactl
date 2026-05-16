@@ -149,6 +149,11 @@ func FlagsFor(r Recipe, m models.Model, _ models.Quant, ggufPath string,
 		}
 	}
 
+	// Prometheus /metrics endpoint — required by the telemetry sidecar
+	// to compute rolling tokens/sec. Cost on llama-server is a handful
+	// of counters; safe to enable unconditionally.
+	args = append(args, "--metrics")
+
 	// Optional per-recipe server-side defaults. Emitted in a stable order
 	// for snapshot-style test assertions.
 	if r.Sampling != nil {

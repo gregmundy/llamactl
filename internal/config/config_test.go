@@ -124,6 +124,32 @@ func TestLoad_ParsesYAML(t *testing.T) {
 	}
 }
 
+func TestSaveLoadTelemetryFields(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.yaml")
+	cfg := Config{
+		TelemetryPort:     18080,
+		TelemetryHost:     "0.0.0.0",
+		TelemetryInterval: "2s",
+	}
+	if err := Save(path, cfg); err != nil {
+		t.Fatal(err)
+	}
+	got, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.TelemetryPort != 18080 {
+		t.Errorf("TelemetryPort = %d, want 18080", got.TelemetryPort)
+	}
+	if got.TelemetryHost != "0.0.0.0" {
+		t.Errorf("TelemetryHost = %q, want 0.0.0.0", got.TelemetryHost)
+	}
+	if got.TelemetryInterval != "2s" {
+		t.Errorf("TelemetryInterval = %q, want 2s", got.TelemetryInterval)
+	}
+}
+
 func TestLoad_RejectsMalformedYAML(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "config.yaml")
