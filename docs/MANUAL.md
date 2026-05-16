@@ -1,6 +1,6 @@
 # llamactl — User Manual
 
-**Version:** v1.5.4
+**Version:** v1.6.0
 **Date:** 2026-05-13
 **Audience:** Product manager sign-off + end users.
 
@@ -126,7 +126,7 @@ Best-effort: if a probe fails, the field is left zero. `doctor` translates zero 
 
 ### 4.2 `llamactl doctor`
 
-Diagnose the environment. Runs 14 checks. Each check prints `✓` (pass) or `✗` (fail) followed by a short description and an optional remediation hint.
+Diagnose the environment. Runs 15 checks. Each check prints `✓` (pass) or `✗` (fail) followed by a short description and an optional remediation hint.
 
 ```
 $ llamactl doctor
@@ -147,7 +147,7 @@ $ llamactl doctor
 OK
 ```
 
-All 14 checks pass-through soft when a dependency is absent (e.g., `tailscale` not installed → soft pass with `(not installed)`). The exit code is 0 if everything passes, 1 if any check fails. See §11 for the complete check inventory.
+All 15 checks pass-through soft when a dependency is absent (e.g., `tailscale` not installed → soft pass with `(not installed)`). The exit code is 0 if everything passes, 1 if any check fails. See §11 for the complete check inventory.
 
 ### 4.3 `llamactl search <query>`
 
@@ -905,6 +905,7 @@ The PRD called out the following as **out of scope** for v1. Re-elevation in lat
 | v1.5.2 | 2026-05-13 | Shell tab-completions: `serve`/`remove` complete to installed model ids; `stop` to running run names; `serve --recipe` to the 5 recipe names; `serve --draft` to installed ids (excluding the main); `config get`/`set` to the 6 config keys; `add` to preferred-id short names (suppressed once you type `/`); `fit --speculative` to installed model ids. Install via `llamactl completion zsh\|bash\|fish > <fpath>`. |
 | v1.5.3 | 2026-05-13 | `brew install gregmundy/tap/llamactl` now auto-installs all three shell completion scripts (bash / fish / zsh) into Homebrew's standard locations. Manual `llamactl completion zsh > ...` step no longer required for brew users. |
 | v1.5.4 | 2026-05-13 | New `thinking` recipe: deterministic sampling (mirrors `agent`) but with `--reasoning on` and `--predict 4096` so Qwen3 / DeepSeek-R1 models think before answering. Response splits into `message.reasoning_content` + `message.content`. |
+| v1.6.0 | 2026-05-16 | New sidecar `llamactl-telemetryd` exposes a JSON `/v1/telemetry` endpoint (installed-model list + per-running model name/size/state/tok-s/uptime) over HTTP for consumption by external dashboards on other hosts. Managed via `llamactl telemetry enable/disable/status`. Bearer auth reuses `api_key`. Added `--metrics` to every recipe (graceful degrade for older serves). Doctor: 14 → 15 checks. |
 
 ---
 
