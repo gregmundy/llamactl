@@ -107,6 +107,7 @@ func run() error {
 		PlistDir:       launchAgentsDir,
 		HTTPClient:     httpClient,
 		Interval:       interval,
+		BackendAPIKey:  apiKey, // same key llamactl serve forwards to llama-server's --api-key
 		BaseURLFn:      telemetry.DefaultBaseURL,
 	}
 

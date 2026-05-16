@@ -38,7 +38,7 @@ func TestScrape_HappyPath_Idle(t *testing.T) {
 		"/slots":   `[{"is_processing":false},{"is_processing":false}]`,
 	})
 
-	s := Scrape(context.Background(), srv.Client(), srv.URL, 18080)
+	s := Scrape(context.Background(), srv.Client(), srv.URL, 18080, "")
 	if s.State != "idle" {
 		t.Errorf("State = %q, want idle", s.State)
 	}
@@ -57,7 +57,7 @@ func TestScrape_Active(t *testing.T) {
 		"/slots":   `[{"is_processing":true}]`,
 	})
 
-	s := Scrape(context.Background(), srv.Client(), srv.URL, 1)
+	s := Scrape(context.Background(), srv.Client(), srv.URL, 1, "")
 	if s.State != "active" {
 		t.Errorf("State = %q, want active", s.State)
 	}
@@ -68,7 +68,7 @@ func TestScrape_Loading_HealthReturns503(t *testing.T) {
 		map[string]int{"/health": 503},
 		map[string]string{"/health": ""},
 	)
-	s := Scrape(context.Background(), srv.Client(), srv.URL, 1)
+	s := Scrape(context.Background(), srv.Client(), srv.URL, 1, "")
 	if s.State != "loading" {
 		t.Errorf("State = %q, want loading", s.State)
 	}
@@ -83,7 +83,7 @@ func TestScrape_MetricsDisabled_501(t *testing.T) {
 			"/slots":   `[{"is_processing":false}]`,
 		},
 	)
-	s := Scrape(context.Background(), srv.Client(), srv.URL, 1)
+	s := Scrape(context.Background(), srv.Client(), srv.URL, 1, "")
 	if s.State != "metrics_disabled" {
 		t.Errorf("State = %q, want metrics_disabled", s.State)
 	}
@@ -98,14 +98,14 @@ func TestScrape_MetricsDisabledButSlotBusy(t *testing.T) {
 			"/slots":   `[{"is_processing":true}]`,
 		},
 	)
-	s := Scrape(context.Background(), srv.Client(), srv.URL, 1)
+	s := Scrape(context.Background(), srv.Client(), srv.URL, 1, "")
 	if s.State != "active" {
 		t.Errorf("State = %q, want active (slots show busy)", s.State)
 	}
 }
 
 func TestScrape_Unreachable(t *testing.T) {
-	s := Scrape(context.Background(), http.DefaultClient, "http://127.0.0.1:1", 1)
+	s := Scrape(context.Background(), http.DefaultClient, "http://127.0.0.1:1", 1, "")
 	if s.State != "unreachable" {
 		t.Errorf("State = %q, want unreachable", s.State)
 	}
@@ -122,9 +122,52 @@ func TestScrape_RespectsContextTimeout(t *testing.T) {
 	defer srv.Close()
 	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
 	defer cancel()
-	s := Scrape(ctx, srv.Client(), srv.URL, 1)
+	s := Scrape(ctx, srv.Client(), srv.URL, 1, "")
 	if s.State != "unreachable" {
 		t.Errorf("State = %q, want unreachable on timeout", s.State)
+	}
+}
+
+// TestScrape_ForwardsAPIKeyToBackend simulates the v1.6.0 bug: when
+// llamactl is configured with api_key, each `serve --detach` plist
+// passes --api-key to llama-server which gates /health, /slots, /metrics
+// on Bearer auth. The telemetry daemon must forward the same key.
+func TestScrape_ForwardsAPIKeyToBackend(t *testing.T) {
+	const token = "sk-test-token"
+	mux := http.NewServeMux()
+	requireAuth := func(w http.ResponseWriter, r *http.Request, body string) {
+		if r.Header.Get("Authorization") != "Bearer "+token {
+			w.WriteHeader(401)
+			fmt.Fprint(w, `{"error":"unauthorized"}`)
+			return
+		}
+		fmt.Fprint(w, body)
+	}
+	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
+		requireAuth(w, r, `{"status":"ok"}`)
+	})
+	mux.HandleFunc("/slots", func(w http.ResponseWriter, r *http.Request) {
+		requireAuth(w, r, `[{"is_processing":false}]`)
+	})
+	mux.HandleFunc("/metrics", func(w http.ResponseWriter, r *http.Request) {
+		requireAuth(w, r, sampleMetricsIdle)
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	// Without the key → unreachable (401 cascade).
+	got := Scrape(context.Background(), srv.Client(), srv.URL, 1, "")
+	if got.State != "unreachable" {
+		t.Errorf("no key: State = %q, want unreachable", got.State)
+	}
+
+	// With the key → idle.
+	got = Scrape(context.Background(), srv.Client(), srv.URL, 1, token)
+	if got.State != "idle" {
+		t.Errorf("with key: State = %q, want idle", got.State)
+	}
+	if got.TokensPredictedTotal != 60 {
+		t.Errorf("with key: TokensPredictedTotal = %d, want 60", got.TokensPredictedTotal)
 	}
 }
 

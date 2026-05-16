@@ -38,6 +38,11 @@ type PIDResolver interface {
 // Poller scrapes each running backend on a tick. Fields must be set
 // before Run is called. LaunchdService and ProcInspector are optional;
 // when nil the response's memory_bytes and uptime_seconds remain zero.
+//
+// BackendAPIKey, when non-empty, is forwarded as Bearer auth on every
+// backend scrape. Required when llamactl is configured with `api_key`
+// — `serve --detach` then passes `--api-key` to each llama-server,
+// which gates /health, /slots, and /metrics behind Bearer auth.
 type Poller struct {
 	State          *State
 	Lister         Lister
@@ -46,6 +51,7 @@ type Poller struct {
 	PlistDir       string
 	HTTPClient     *http.Client
 	Interval       time.Duration
+	BackendAPIKey  string
 	// BaseURLFn lets tests redirect requests to httptest URLs while
 	// production builds use http://127.0.0.1:<port>.
 	BaseURLFn func(port int) string
@@ -86,7 +92,7 @@ func (p *Poller) tickOnce(ctx context.Context) {
 			scrapeCtx, cancel := context.WithTimeout(ctx, 1*time.Second)
 			defer cancel()
 			base := p.BaseURLFn(svc.Port)
-			sample := Scrape(scrapeCtx, p.HTTPClient, base, svc.Port)
+			sample := Scrape(scrapeCtx, p.HTTPClient, base, svc.Port, p.BackendAPIKey)
 			sample.Recipe = recipes.IdentifyFromArgv(svc.Args)
 
 			// Per-PID enrichment (memory + uptime). Skipped when
