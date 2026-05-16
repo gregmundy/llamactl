@@ -107,6 +107,7 @@ func buildDoctorChecks(ctx context.Context, deps *Deps) ([]doctorCheck, string) 
 		hfCacheSizeCheck(deps),
 		authOnPublicBindCheck(deps),
 		latestVersionCheck(deps),
+		telemetryAuthCheck(deps),
 	}
 	return checks, ""
 }
@@ -541,6 +542,50 @@ func authOnPublicBindCheck(deps *Deps) doctorCheck {
 				return false, svc.Label + " binds publicly without --api-key"
 			}
 			return true, ""
+		},
+	}
+}
+
+// telemetryAuthCheck flags two telemetryd misconfigurations:
+//  1. plist exists + public bind + no api_key → unauthenticated public endpoint
+//  2. plist exists + port unreachable via dial-probe → enabled but not serving
+//
+// When the plist is absent (telemetry not enabled), the check passes
+// silently with a "(not enabled)" detail.
+func telemetryAuthCheck(_ *Deps) doctorCheck {
+	return doctorCheck{
+		label:       "Telemetry daemon authentication",
+		remediation: "if telemetry is enabled on a public bind, set api_key: `llamactl config set api_key <token>`",
+		run: func(_ context.Context, d *Deps) (bool, string) {
+			plistPath := filepath.Join(d.LaunchAgentsDir, launchd.TelemetrydLabel+".plist")
+			if _, err := os.Stat(plistPath); err != nil {
+				return true, "(not enabled)"
+			}
+			host := d.Config.TelemetryHost
+			if host == "" {
+				host = "0.0.0.0"
+			}
+			apiKey := d.Getenv("LLAMACTL_API_KEY")
+			if apiKey == "" {
+				apiKey = d.Config.APIKey
+			}
+			if isPublicHostStr(host) && apiKey == "" {
+				return false, fmt.Sprintf("bound %s without api_key", host)
+			}
+			port := d.Config.TelemetryPort
+			if port == 0 {
+				port = 18080
+			}
+			conn, err := net.DialTimeout("tcp", fmt.Sprintf("127.0.0.1:%d", port), 200*time.Millisecond)
+			if err != nil {
+				return false, fmt.Sprintf("plist present but :%d not responding", port)
+			}
+			_ = conn.Close()
+			auth := "none"
+			if apiKey != "" {
+				auth = "bearer"
+			}
+			return true, fmt.Sprintf("running on %s:%d (auth: %s)", host, port, auth)
 		},
 	}
 }
