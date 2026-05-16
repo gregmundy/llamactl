@@ -189,3 +189,54 @@ func TestConfigSetRejectsNegativePort(t *testing.T) {
 		t.Fatalf("expected ErrUserError for negative port, got %v", err)
 	}
 }
+
+func TestConfigSetTelemetryPortValidation(t *testing.T) {
+	tempDir := t.TempDir()
+	cfgPath := filepath.Join(tempDir, "config.yaml")
+
+	// Out-of-range port → ErrUserError.
+	d := &Deps{Config: &config.Config{}, ConfigPath: cfgPath, Stdout: io.Discard, Stderr: io.Discard}
+	cmd := newConfigCmd(d)
+	cmd.SetArgs([]string{"set", "telemetry_port", "70000"})
+	if err := cmd.Execute(); err == nil || !errors.Is(err, ErrUserError) {
+		t.Fatalf("expected ErrUserError for port 70000, got %v", err)
+	}
+
+	// In-range port → persisted.
+	d = &Deps{Config: &config.Config{}, ConfigPath: cfgPath, Stdout: io.Discard, Stderr: io.Discard}
+	cmd = newConfigCmd(d)
+	cmd.SetArgs([]string{"set", "telemetry_port", "18080"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	loaded, err := config.Load(cfgPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if loaded.TelemetryPort != 18080 {
+		t.Errorf("TelemetryPort = %d, want 18080", loaded.TelemetryPort)
+	}
+}
+
+func TestConfigSetTelemetryIntervalValidation(t *testing.T) {
+	tempDir := t.TempDir()
+	cfgPath := filepath.Join(tempDir, "config.yaml")
+
+	// Garbage → ErrUserError.
+	d := &Deps{Config: &config.Config{}, ConfigPath: cfgPath, Stdout: io.Discard, Stderr: io.Discard}
+	cmd := newConfigCmd(d)
+	cmd.SetArgs([]string{"set", "telemetry_interval", "not-a-duration"})
+	if err := cmd.Execute(); err == nil || !errors.Is(err, ErrUserError) {
+		t.Fatalf("expected ErrUserError for garbage duration, got %v", err)
+	}
+
+	// Valid durations → persist.
+	for _, val := range []string{"2s", "500ms", "1m"} {
+		d := &Deps{Config: &config.Config{}, ConfigPath: cfgPath, Stdout: io.Discard, Stderr: io.Discard}
+		cmd := newConfigCmd(d)
+		cmd.SetArgs([]string{"set", "telemetry_interval", val})
+		if err := cmd.Execute(); err != nil {
+			t.Fatalf("unexpected error setting %q: %v", val, err)
+		}
+	}
+}

@@ -6,6 +6,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/gregmundy/llamactl/internal/config"
 	"github.com/spf13/cobra"
@@ -143,6 +144,11 @@ func runConfigSet(d *Deps, key, value string) error {
 				return fmt.Errorf("%w: log_level must be one of debug|info|warn|error (or empty to clear), got %q", ErrUserError, value)
 			}
 		}
+		if key == "telemetry_interval" && value != "" {
+			if _, err := time.ParseDuration(value); err != nil {
+				return fmt.Errorf("%w: telemetry_interval must be a Go duration (e.g. 2s, 500ms), got %q", ErrUserError, value)
+			}
+		}
 		fv.SetString(value)
 
 	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
@@ -152,6 +158,9 @@ func runConfigSet(d *Deps, key, value string) error {
 		}
 		if key == "default_port" && (n < 0 || n > 65535) {
 			return fmt.Errorf("%w: default_port must be between 0 and 65535, got %d", ErrUserError, n)
+		}
+		if key == "telemetry_port" && (n < 1 || n > 65535) {
+			return fmt.Errorf("%w: telemetry_port must be between 1 and 65535, got %d", ErrUserError, n)
 		}
 		fv.SetInt(int64(n))
 
